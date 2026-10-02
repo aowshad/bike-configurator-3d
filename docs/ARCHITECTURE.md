@@ -107,6 +107,22 @@ Details per style:
   flatten each spoke's cross-section (wider along the axle, thinner in the direction of travel). Nipple pieces are found by connectivity
   (`pieces()`), which also gives each nipple its own vertex color for "Rainbow".
 
+## Looks (presets)
+
+"Start from a look" shows one card per `PRESETS` entry: a rendered thumbnail, `desc`, and the price change (`extrasTotal()` of the look's full build).
+
+- **Thumbnails** are rendered after the model loads, one look per idle frame (`thumbStep()` in the render loop). The look's state is
+  applied instantly, the scene is drawn with `thumbCam` into a scissored 336×184 corner of the main canvas, copied to a 2D canvas, and
+  the state is restored, all before that frame's normal render paints over the corner, so the shopper never sees it.
+  Using the main canvas keeps the same compiled shaders: three renders a `WebGLRenderTarget` with linear output and no tone mapping,
+  which would compile a second set of programs and stall. Each thumbnail is cached as a data URL per theme and re-rendered on a theme change.
+- To keep a thumbnail frame within budget: lettering is drawn into small 256 px copies of the text decals (`tdThumb`) and uploaded a
+  frame early, every look's deformation targets and bounding spheres are computed at load, the shadow map is reused, and the sub-pixel
+  spoke nipples are skipped. Measured: no frame over 16.8 ms while the 8 thumbnails render (Apple M4, Chrome, 1440×900 and 375×812 @2x).
+- **Applying** a look keeps text the shopper typed (see `applyPreset()`), shows a toast with the number of parts that changed
+  (`changedParts()`) and an Undo that restores the previous state exactly. `look` remembers the applied look and the build right after it;
+  any later change marks its card "edited".
+
 ## Coordinates
 
 World units are meters. The ground is y = 0, the bike faces +X, and the drive side faces +Z.

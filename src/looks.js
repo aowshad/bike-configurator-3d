@@ -277,7 +277,7 @@ export function makeTires(mat, hubs){
 // and cached; switching eases from the current positions to the cached target.
 export class Deformer {
   constructor(meshes, fn, dur = 260){
-    this.fn = fn; this.dur = dur; this.cache = new Map(); this.anim = null; this.key = null;
+    this.fn = fn; this.dur = dur; this.cache = new Map(); this.spheres = new WeakMap(); this.anim = null; this.key = null;
     const v = new THREE.Vector3();
     this.items = meshes.map(m => {
       const a = m.geometry.attributes.position, rest = new Float32Array(a.count * 3), local = new Float32Array(a.count * 3);
@@ -289,6 +289,11 @@ export class Deformer {
   }
   // rest positions as an attribute, so shader patterns stay glued to the surface while it deforms
   restAttribute(filter = () => true){ for (const it of this.items) if (filter(it.mesh)) it.mesh.geometry.setAttribute('aRest', new THREE.BufferAttribute(it.rest, 3)); }
+  // compute and cache a target (and its bounding spheres) ahead of time
+  warm(params){
+    const to = this.target(JSON.stringify(params), params);
+    to.forEach(a => { if (!this.spheres.has(a)) { const g = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(a, 3)); g.computeBoundingSphere(); this.spheres.set(a, g.boundingSphere); } });
+  }
   target(key, params){
     if (!this.cache.has(key)) {
       const v = new THREE.Vector3();
@@ -300,11 +305,18 @@ export class Deformer {
     }
     return this.cache.get(key);
   }
-  set(params, instant){
-    const key = JSON.stringify(params); if (key === this.key) return; this.key = key;
-    const to = this.target(key, params), from = this.items.map(it => it.attr.array.slice());
-    if (instant) { this.items.forEach((it, i) => this.write(it, from[i], to[i], 1)); return; }
-    this.anim = { from, to, start: performance.now() };
+  // `only` limits an instant set to some meshes (look thumbnails skip the sub-pixel spoke nipples)
+  set(params, instant, only){
+    const key = JSON.stringify(params);
+    if (instant) {
+      const to = this.target(key, params); this.anim = null; this.key = key;
+      this.items.forEach((it, i) => { if (it.key === key || (only && !only(it))) return; this.write(it, null, to[i], 1); it.key = key; });
+      return;
+    }
+    if (key === this.key) return; this.key = key;
+    const to = this.target(key, params);
+    this.anim = { from: this.items.map(it => it.attr.array.slice()), to, start: performance.now() };
+    this.items.forEach(it => it.key = key);
   }
   // called every frame; returns true while animating
   step(now){
@@ -314,11 +326,15 @@ export class Deformer {
     if (t >= 1) this.anim = null;
     return true;
   }
+  // the final step is a plain copy of the cached target, with its bounding sphere cached too
   write(it, from, to, k){
-    const a = it.attr.array;
-    for (let i = 0; i < a.length; i++) a[i] = from[i] + (to[i] - from[i]) * k;
+    const a = it.attr.array, g = it.mesh.geometry;
+    if (k >= 1) a.set(to); else for (let i = 0; i < a.length; i++) a[i] = from[i] + (to[i] - from[i]) * k;
     it.attr.needsUpdate = true;
-    if (k >= 1) it.mesh.geometry.computeBoundingSphere();
+    if (k < 1) return;
+    const s = this.spheres.get(to);
+    if (s) { if (g.boundingSphere) g.boundingSphere.copy(s); else g.boundingSphere = s.clone(); }
+    else { g.computeBoundingSphere(); this.spheres.set(to, g.boundingSphere.clone()); }
   }
 }
 

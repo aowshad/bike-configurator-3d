@@ -40,6 +40,7 @@ Keep it that way unless the roadmap item says otherwise.
 
 - **Never use monospace fonts** anywhere, for values, hex codes or labels. Use Inter or the sans stack with `font-variant-numeric: tabular-nums`.
 - Motion should be calm and subtle. Use only the tokens `--fast 120ms`, `--base 180ms`, `--slow 260ms` and `--ease`/`--ease-io`. Never use bounce, `transition: all` or scale-on-hover. Respect `prefers-reduced-motion`.
+  The one exception, requested by the owner: the "Live preview" dot pulses (opacity 1 → .4, 2 s, ease-in-out), and stops under reduced motion.
 - Use native scrolling only. Don't add scroll-jacking libraries.
 - Light and dark themes must both work. Every color comes from the CSS tokens in `styles.css`.
 - Mobile at 375px must not scroll horizontally. The stage is on top and the panel scrolls below it.
@@ -64,7 +65,9 @@ Keep it that way unless the roadmap item says otherwise.
 6. **Style options** switch with uniforms only (see docs/ARCHITECTURE.md, "Style options"). Every hidden variant is made visible for
    `compileAsync()` at load. `sheen` and other optional features must stay > 0, or three drops the define and recompiles.
    three's default `sheenColor` is black, which makes `sheen` invisible.
-7. The Blender materials are procedural and do not export. Detail comes from geometry plus the small generated normal maps (`flake`, `grain`). Baked textures are on the roadmap.
+7. **Never render to a `WebGLRenderTarget` for previews.** three renders targets with linear output and no tone mapping, which compiles
+   a second set of shader programs (a stall). Look thumbnails render into a scissored corner of the main canvas instead (ARCHITECTURE.md, "Looks").
+8. The Blender materials are procedural and do not export. Detail comes from geometry plus the small generated normal maps (`flake`, `grain`). Baked textures are on the roadmap.
 
 ## Verify every change
 

@@ -163,15 +163,16 @@ export const SECTIONS = [
 ];
 
 export const PRESETS = [
-  { name:'Factory', c:{} },
-  { name:'Stealth', c:{ frame:1, finish:2, rear:0, accent:5, fork:0, spring:2, rims:0, spokes:0, grips:1, bar:0, saddle:0, chain:1, cranks:0, pedals:0, logoColor:1 } },
-  { name:'Race Red', c:{ frame:2, finish:0, rear:4, accent:1, fork:0, spring:1, rims:0, spokes:0, grips:2, saddle:0, chain:0, logoColor:1 } },
-  { name:'Papaya', c:{ frame:6, finish:1, rear:2, accent:5, fork:1, spring:2, rims:0, grips:1, logoColor:1 } },
-  { name:'Oil & Gold', c:{ frame:8, finish:3, rear:0, accent:6, fork:3, uppers:1, spring:0, rims:2, grips:1, chain:3, cranks:0, logoColor:2 } },
-  { name:'Team Edition', c:{ frame:2, paint:2, paint2:3, splitAngle:60, finish:0, accent:1, fork:2, spring:1, grips:1, sidewall:2, rimDepth:1, txtFont:1, logoColor:1,
+// desc: one line on the look card. The card price is extrasTotal() of the look's full build.
+  { name:'Factory', desc:'Storm grey, stock parts', c:{} },
+  { name:'Stealth', desc:'Matte black on black', c:{ frame:1, finish:2, rear:0, accent:5, fork:0, spring:2, rims:0, spokes:0, grips:1, bar:0, saddle:0, chain:1, cranks:0, pedals:0, logoColor:1 } },
+  { name:'Race Red', desc:'White and red two-tone', c:{ frame:2, finish:0, rear:4, accent:1, fork:0, spring:1, rims:0, spokes:0, grips:2, saddle:0, chain:0, logoColor:1 } },
+  { name:'Papaya', desc:'Orange and black two-tone', c:{ frame:6, finish:1, rear:2, accent:5, fork:1, spring:2, rims:0, grips:1, logoColor:1 } },
+  { name:'Oil & Gold', desc:'Purple flake, oil slick, gold', c:{ frame:8, finish:3, rear:0, accent:6, fork:3, uppers:1, spring:0, rims:2, grips:1, chain:3, cranks:0, logoColor:2 } },
+  { name:'Team Edition', desc:'Split paint, team lettering', c:{ frame:2, paint:2, paint2:3, splitAngle:60, finish:0, accent:1, fork:2, spring:1, grips:1, sidewall:2, rimDepth:1, txtFont:1, logoColor:1,
     frameTxt:'TEAM GRAVITY', tiresTxt:'GRAVITY RACE', forkTxt:'GRAVITY 200', name:'TEAM EDITION' } },
-  { name:'Camo Raw', c:{ frame:5, paint:3, paint2:7, paintScale:5, finish:2, accent:5, fork:0, spring:2, grips:1, gripPat:0, saddle:0, cover:3, sidewall:1, logoColor:1 } },
-  { name:'Street Slick', c:{ frame:9, paint:1, paint2:1, finish:1, accent:2, spring:0, tread:2, sidewall:1, rise:2, width:0, saddleShape:1, cover:1, pedalStyle:1, rims:0, logoColor:0 } },
+  { name:'Camo Raw', desc:'Matte camo, tan walls, suede', c:{ frame:5, paint:3, paint2:7, paintScale:5, finish:2, accent:5, fork:0, spring:2, grips:1, gripPat:0, saddle:0, cover:3, sidewall:1, logoColor:1 } },
+  { name:'Street Slick', desc:'Petrol fade, slicks, flat bar', c:{ frame:9, paint:1, paint2:1, finish:1, accent:2, spring:0, tread:2, sidewall:1, rise:2, width:0, saddleShape:1, cover:1, pedalStyle:1, rims:0, logoColor:0 } },
 ];
 
 export const DEFAULT = { frame:0, finish:0, rear:0, accent:0, fork:0, uppers:0, spring:0, rims:0, spokes:0, tread:0, rubber:0,

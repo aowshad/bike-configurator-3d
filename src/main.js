@@ -180,12 +180,12 @@ function paintText(g, s, x, y, size, fx){
 const fxPad = (fx, size) => fx === 1 ? size*.16 : fx === 2 ? size*.07 : fx === 3 ? size*.22 : 0;
 
 class TextDecal {
-  constructor(mesh, spot, img){
+  constructor(mesh, spot, img, res = 1024){
     const uv = mesh.geometry.attributes.uv;
     let u0 = 1, v0 = 1, u1 = 0, v1 = 0;
     for (let i = 0; i < uv.count; i++) { const u = uv.getX(i), v = uv.getY(i); u0 = Math.min(u0, u); v0 = Math.min(v0, v); u1 = Math.max(u1, u); v1 = Math.max(v1, v); }
     const du = Math.max(u1 - u0, 1e-3), dv = Math.max(v1 - v0, 1e-3);
-    const w = du * img.width, h = dv * img.height, s = 1024 / Math.max(w, h);
+    const w = du * img.width, h = dv * img.height, s = res / Math.max(w, h);
     const c = this.canvas = document.createElement('canvas');
     c.width = Math.max(16, Math.round(w * s)); c.height = Math.max(16, Math.round(h * s));
     const t = this.tex = new THREE.CanvasTexture(c);
@@ -312,7 +312,11 @@ loader.load('assets/models/bike.glb', gltf => {
       o.material = m; o.castShadow = false; o.userData.slot = 'decal'; o.userData.baseMap = m.map;
       decals.push(o);
       const spot = spotOf(nodeName);
-      if (spot && src) { o.userData.spot = spot.id; o.userData.td = new TextDecal(o, spot, src); spotMeshes[spot.id].push(o); }
+      if (spot && src) {
+        o.userData.spot = spot.id; spotMeshes[spot.id].push(o);
+        o.userData.td = new TextDecal(o, spot, src);
+        o.userData.tdThumb = new TextDecal(o, spot, src, 256);   // small copy for look thumbnails: cheap to draw mid-frame
+      }
     } else {
       const slot = slotFor(nodeName, o.material.name);
       o.material = M[slot] || M.black; o.userData.slot = slot;
@@ -331,7 +335,9 @@ loader.load('assets/models/bike.glb', gltf => {
   const variants = [...treads.flat(), ...collars.inner, ...collars.outer, nodes.Guard, nodes.Pedals].filter(Boolean);
   variants.forEach(o => o.visible = true);
   document.getElementById('loadTxt').textContent = 'Preparing materials…';
-  const ready = () => { applyState(true); document.getElementById('loader').classList.add('done'); flyTo('overview'); };
+  // warm every look's deformation targets now, so rendering its thumbnail never computes geometry mid-frame
+  for (const s of [state, ...PRESETS.map(p => ({ ...DEFAULT, ...p.c }))]) { const dp = deformParams(s); for (const k in deform) deform[k].warm(dp[k]); }
+  const ready = () => { applyState(true); document.getElementById('loader').classList.add('done'); flyTo('overview'); modelReady = true; queueThumbs(); };
   (renderer.compileAsync ? renderer.compileAsync(scene, camera) : Promise.resolve()).then(ready, ready);
 }, e => {
   if (!e.total) return;
@@ -472,7 +478,14 @@ SECTIONS.forEach(s => s.controls.forEach(addCtrl));
 const opt = key => CTRL[key];
 const pick = key => opt(key).opts[state[key]] || opt(key).opts[0];
 
-function applyState(instant=false){
+// shape parameters for a state (also used to warm the deformation caches for every look)
+const deformParams = s => ({
+  cockpit: { rise: BAR_RISE[s.rise]?.[2] ?? 0, dw: BAR_WIDTH[s.width]?.[2] ?? 0 },
+  saddle: SADDLE_SHAPES[s.saddleShape]?.[2] ?? 0,
+  wheels: { depth: RIM_DEPTHS[s.rimDepth]?.[2] ?? 0, bladed: SPOKE_SHAPES[s.spokeShape]?.[2] ?? 0 },
+  pedals: PEDAL_STYLES[s.pedalStyle]?.[2] ?? 0,
+});
+function applyState(instant=false, ui=true){
   const paint = pick('frame')[1], fin = FINISH[state.finish] || FINISH[0];
   const finish = { roughness:fin.roughness, metalness:fin.metalness, clearcoat:fin.clearcoat, clearcoatRoughness:fin.clearcoatRoughness };
   for (const m of [M.frame, M.rear]) m.normalScale.set(fin.ns, fin.ns);   // flake map stays bound: no recompile
@@ -519,10 +532,8 @@ function applyState(instant=false){
   const local = off.applyAxisAngle(new THREE.Vector3(0,1,0), Math.PI/2); // world → bike-local
   for (const n of ['Seat', 'Seatpost']) if (nodes[n]) nodes[n].position.copy(nodes[n].userData.basePos).add(local);
   // shape changes (cached, eased over --slow)
-  deform.cockpit?.set({ rise: BAR_RISE[state.rise]?.[2] ?? 0, dw: BAR_WIDTH[state.width]?.[2] ?? 0 }, instant);
-  deform.saddle?.set(SADDLE_SHAPES[state.saddleShape]?.[2] ?? 0, instant);
-  deform.wheels?.set({ depth: RIM_DEPTHS[state.rimDepth]?.[2] ?? 0, bladed: SPOKE_SHAPES[state.spokeShape]?.[2] ?? 0 }, instant);
-  deform.pedals?.set(PEDAL_STYLES[state.pedalStyle]?.[2] ?? 0, instant);
+  const dp = deformParams(state);
+  for (const k in deform) deform[k].set(dp[k], instant, thumbMode ? thumbMesh : undefined);
 
   // stickers & custom text
   drawTexts();
@@ -530,21 +541,24 @@ function applyState(instant=false){
     const sp = TEXT_SPOTS.find(s => s.id === d.userData.spot), custom = sp ? spotText(sp).length > 0 : false;
     d.visible = (state.logos === 0 || custom) && !(sp?.arc && slick);
     setMat(d.material, { color: matchColor(pick(sp ? spotStyle(sp).col : 'logoColor')) }, instant);
-    const map = custom ? d.userData.td.tex : d.userData.baseMap;
+    const map = custom ? textDecal(d).tex : d.userData.baseMap;
     if (d.material.map !== map) d.material.map = map;   // both are sRGB maps: same shader, no recompile
   }
-  updateUI();
+  if (ui) updateUI();
 }
 const spotText = sp => { const t = state[sp.key].trim(); return state[sp.id + 'Case'] ? t : t.toUpperCase(); };
 const spotStyle = sp => state.sameStyle ? { font: state.txtFont, col: 'logoColor', fx: state.txtFx }
   : { font: state[sp.id + 'Font'], col: sp.id + 'Col', fx: state[sp.id + 'Fx'] };
 // a "match" option (null hex) borrows the color of the slot named in opts[i][3]
 const matchColor = o => o[1] ?? (o[3] === 'frame' ? pick('frame')[1] : pick('accent')[1]);
+let thumbMode = false;   // true while a look thumbnail renders
+const thumbMesh = it => it.mesh !== meshes.Spoke_nipples;   // nipples are sub-pixel in a thumbnail: skip and hide them
+const textDecal = d => thumbMode ? d.userData.tdThumb : d.userData.td;
 function drawTexts(){
   for (const sp of TEXT_SPOTS) {
     const txt = spotText(sp); if (!txt) continue;
     const st = spotStyle(sp), f = FONTS[st.font] || FONTS[0];
-    for (const d of spotMeshes[sp.id]) d.userData.td.draw(txt, f, st.fx);
+    for (const d of spotMeshes[sp.id]) textDecal(d).draw(txt, f, st.fx);
   }
 }
 
@@ -563,8 +577,68 @@ renderer.setAnimationLoop(now => {
   }
   for (const [key, a] of anims) { const t = Math.min(1, (now - a.start) / a.dur); if (t >= 1) anims.delete(key); a.step(1 - Math.pow(1 - t, 3)); }
   for (const d of Object.values(deform)) d.step(now);
-  controls.update(); renderer.render(scene, camera);
+  controls.update();
+  thumbStep(now);   // draws into a corner of the canvas; the full render below paints over it in the same frame
+  renderer.render(scene, camera);
 });
+
+/* ============ look thumbnails ============ */
+// Each look is rendered once with the main renderer into a scissored corner of the canvas, copied out, and cached
+// as a data URL per theme. Same renderer and default framebuffer means the same compiled shaders: no recompiles.
+// (A render target would compile new programs: three renders targets with linear output and no tone mapping.)
+const TW = 336, TH = 184;   // 2x of the 168×92 card thumbnail
+const thumbCam = new THREE.PerspectiveCamera(22, TW / TH, .1, 30);
+thumbCam.position.set(.45, .82, 3.55); thumbCam.lookAt(0, .5, 0);
+const thumbCanvas = Object.assign(document.createElement('canvas'), { width: TW, height: TH });
+const thumbCache = new Map();   // `${theme}|${look}` → data URL
+let thumbQueue = [], lastThumb = 0, modelReady = false;
+const themeName = () => { const r = document.documentElement; return (r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light'; };
+function queueThumbs(){
+  const t = themeName(); thumbQueue = [];
+  PRESETS.forEach((p, i) => {
+    const url = thumbCache.get(t + '|' + i); if (url) { setThumb(i, url); return; }
+    if (TEXT_SPOTS.some(sp => p.c[sp.key])) thumbQueue.push({ i, prep: true });   // draw and upload its lettering a frame early
+    thumbQueue.push({ i });
+  });
+}
+// draw a look's text into the small thumbnail decals and upload them, so its thumbnail frame only renders
+function prepThumbText(i){
+  const saved = { ...state };
+  thumbMode = true; Object.assign(state, DEFAULT, PRESETS[i].c); drawTexts(); thumbMode = false;
+  Object.assign(state, saved);
+  for (const sp of TEXT_SPOTS) if (PRESETS[i].c[sp.key]) for (const d of spotMeshes[sp.id]) renderer.initTexture(d.userData.tdThumb.tex);
+}
+function thumbStep(now){
+  // one look per frame, only while nothing is animating (the swap below applies states instantly)
+  if (!modelReady || !thumbQueue.length || anims.size || tween || Object.values(deform).some(d => d.anim) || now - lastThumb < 90) return;
+  const buf = renderer.getDrawingBufferSize(new THREE.Vector2()); if (buf.x < TW || buf.y < TH) return;
+  lastThumb = now;
+  const job = thumbQueue.shift(), i = job.i, theme = themeName(), saved = { ...state };
+  if (job.prep) { prepThumbText(i); return; }
+  thumbMode = true; Object.assign(state, DEFAULT, PRESETS[i].c); applyState(true, false);
+  const pr = renderer.getPixelRatio(), size = renderer.getSize(new THREE.Vector2()), clear = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha();
+  renderer.shadowMap.autoUpdate = false;   // keep this frame's shadow map: saves a full pass, invisible at thumbnail size
+  renderer.setScissorTest(true); renderer.setViewport(0, 0, TW / pr, TH / pr); renderer.setScissor(0, 0, TW / pr, TH / pr);
+  const nip = meshes.Spoke_nipples; if (nip) nip.visible = false;
+  renderer.setClearColor(0x000000, 0); renderer.render(scene, thumbCam);
+  if (nip) nip.visible = true;
+  const g = thumbCanvas.getContext('2d'); g.clearRect(0, 0, TW, TH);
+  g.drawImage(renderer.domElement, 0, buf.y - TH, TW, TH, 0, 0, TW, TH);
+  renderer.setScissorTest(false); renderer.setViewport(0, 0, size.x, size.y); renderer.setClearColor(clear, alpha);
+  renderer.shadowMap.autoUpdate = true;
+  thumbMode = false; Object.assign(state, saved); applyState(true, false);
+  // encode off the main thread, then hand over a data URL
+  thumbCanvas.toBlob(b => { const r = new FileReader(); r.onload = () => { thumbCache.set(theme + '|' + i, r.result); if (theme === themeName()) setThumb(i, r.result); }; r.readAsDataURL(b); }, 'image/png');
+}
+// cross-fade: load into the hidden layer, then swap
+function setThumb(i, url){
+  const card = document.querySelector(`[data-preset="${i}"]`); if (!card) return;
+  const [a, b] = card.querySelectorAll('.lthumb img'), cur = a.classList.contains('on') ? a : b.classList.contains('on') ? b : null;
+  if (cur?.getAttribute('src') === url) return;
+  const next = cur === a ? b : a;
+  next.onload = () => { next.classList.add('on'); cur?.classList.remove('on'); card.classList.add('ready'); };
+  next.src = url;
+}
 controls.addEventListener('start', () => { tween = null; document.getElementById('hint').style.opacity = 0; document.querySelectorAll('[data-view]').forEach(b => b.classList.remove('on')); });
 
 /* click a part → open its section */
@@ -632,25 +706,28 @@ document.getElementById('sections').innerHTML = SECTIONS.map(s => `
     <div class="sbody" id="body-${s.id}"><div><div class="sinner">${s.controls.map(control).join('')}</div></div></div>
   </div>`).join('');
 
-document.getElementById('presets').innerHTML = PRESETS.map((p,i) => {
-  const c = { ...DEFAULT, ...p.c };
-  const dots = [PAINT[c.frame][1], (c.rear ? PAINT[c.rear-1][1] : PAINT[c.frame][1]), ANO[c.accent][0]==='Oil Slick' ? OIL : ANO[c.accent][1]];
-  return `<button class="preset" data-preset="${i}"><span class="dots">${dots.map(d => `<i style="background:${d}"></i>`).join('')}</span>${p.name}</button>`;
-}).join('');
-
 // sidewall text only fits the GLB's knobby tire (see docs/ROADMAP.md), so it is neither shown nor charged on other treads
-const spotShown = sp => !(sp.arc && state.tread !== 0);
-const customSpots = () => TEXT_SPOTS.filter(sp => state[sp.key].trim() && spotShown(sp)).length;
-const textTotal = () => Math.min(customSpots() * TEXT_PRICE, TEXT_PRICE_MAX);
-function extrasTotal(){
-  let sum = textTotal();
+const spotShown = (sp, s = state) => !(sp.arc && s.tread !== 0);
+const customSpots = (s = state) => TEXT_SPOTS.filter(sp => s[sp.key].trim() && spotShown(sp, s)).length;
+const textTotal = (s = state) => Math.min(customSpots(s) * TEXT_PRICE, TEXT_PRICE_MAX);
+function extrasTotal(s = state){
+  let sum = textTotal(s);
   for (const c of Object.values(CTRL)) {
     if (!c.opts || c.type === 'font') continue;
-    const o = c.opts[state[c.key]]; if (!o) continue;
+    const o = c.opts[s[c.key]]; if (!o) continue;
     const p = ['seg', 'effect', 'deform'].includes(c.type) ? o[1] : o[2]; if (p) sum += p;
   }
   return sum;
 }
+const check = '<svg class="chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
+document.getElementById('presets').innerHTML = '<i class="lookSel" aria-hidden="true"></i>' + PRESETS.map((p,i) => {
+  const ex = extrasTotal({ ...DEFAULT, ...p.c });
+  return `<button class="look" data-preset="${i}" aria-pressed="false" aria-label="${p.name}: ${p.desc}, ${ex ? 'plus ' + fmt(ex) : 'base price'}. Replaces your whole build.">
+    <span class="lthumb"><img alt=""><img alt=""></span>
+    <span class="lmeta"><span class="lname"><b>${p.name}</b><span class="ledit">· edited</span>${check}</span>
+    <span class="ldesc">${p.desc}</span><span class="lprice">${ex ? '+' + fmt(ex) : 'Base price'}</span></span>
+  </button>`;
+}).join('');
 function summary(s){
   const v = k => pick(k)[0];
   switch (s.id) {
@@ -714,14 +791,50 @@ function updateUI(){
   const ex = extrasTotal();
   document.getElementById('total').textContent = fmt(BASE_PRICE + ex);
   document.getElementById('extra').textContent = ex ? `incl. ${fmt(ex)} in options` : '';
-  const match = PRESETS.findIndex(presetMatches);
-  document.querySelectorAll('.preset').forEach((b,i) => b.classList.toggle('on', i === match));
+  syncLooks();
+}
+// which look card is selected: the look the shopper applied (marked edited once anything changes),
+// or, with no look applied (e.g. a shared link), the look this build matches
+function syncLooks(){
+  let sel = -1, edited = false;
+  if (look) { sel = look.i; edited = Object.keys(DEFAULT).some(k => state[k] !== look.snap[k]); }
+  else sel = PRESETS.findIndex(presetMatches);
+  const wrap = document.getElementById('presets'), ind = wrap.querySelector('.lookSel');
+  document.querySelectorAll('.look').forEach((b, i) => { b.setAttribute('aria-pressed', String(i === sel)); b.classList.toggle('edited', i === sel && edited); });
+  const card = wrap.querySelector(`[data-preset="${sel}"]`);
+  ind.classList.toggle('on', !!card); ind.classList.toggle('edited', edited);
+  if (card) Object.assign(ind.style, { transform: `translateX(${card.offsetLeft}px)`, width: card.offsetWidth + 'px', height: card.offsetHeight + 'px', top: card.offsetTop + 'px' });
 }
 
 // Presets are looks: text the shopper typed survives a preset change, text that came from a preset does not.
 const TEXT_KEYS = TEXT_SPOTS.map(sp => sp.key);
 let presetText = {};
 const presetMatches = p => Object.keys(DEFAULT).every(k => (TEXT_KEYS.includes(k) && !(k in p.c) && state[k] !== presetText[k]) || ({ ...DEFAULT, ...p.c })[k] === state[k]);
+let look = null;   // { i, snap }: the look applied last and the build right after applying it
+// how many parts a change touches: changed options that are visible in either build; a text spot's style counts with its text
+function changedParts(a, b){
+  const shown = (k, s) => { const w = CTRL[k]?.when; return !w || [].concat(w[1]).includes(s[w[0]]); };
+  const parts = new Set();
+  for (const k of Object.keys(DEFAULT)) {
+    if (a[k] === b[k] || k === 'sameStyle' || !(shown(k, a) || shown(k, b))) continue;
+    const sp = TEXT_SPOTS.find(sp => k !== sp.key && k.startsWith(sp.id) && /^(Case|Font|Col|Fx)$/.test(k.slice(sp.id.length)));
+    if (sp) { if (a[sp.key].trim() || b[sp.key].trim()) parts.add(sp.key); continue; }
+    parts.add(k);
+  }
+  return parts.size;
+}
+function applyLook(i){
+  const p = PRESETS[i], prev = { state: { ...state }, look, presetText: { ...presetText } };
+  applyPreset(p); commit(); flyTo('overview');
+  const n = changedParts(prev.state, state);
+  look = { i, snap: { ...state } }; syncLooks();
+  document.querySelector(`[data-preset="${i}"]`).scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' });
+  if (!n) { toast(`${p.name} is already your build`); return; }
+  toast(`${p.name} applied to ${n} part${n === 1 ? '' : 's'}`, 'Undo', () => {
+    Object.assign(state, prev.state); look = prev.look; presetText = prev.presetText; commit();
+    toast('Previous build restored');
+  });
+}
 function applyPreset(p){
   const keep = {};
   for (const k of TEXT_KEYS) keep[k] = k in p.c ? p.c[k] : (state[k] !== (presetText[k] ?? '') ? state[k] : '');
@@ -766,7 +879,7 @@ document.addEventListener('click', e => {
     if (k === 'sameStyle' && !state[k]) for (const sp of TEXT_SPOTS) Object.assign(state, { [sp.id+'Font']: state.txtFont, [sp.id+'Col']: state.logoColor, [sp.id+'Fx']: state.txtFx });
     commit(); return;
   }
-  const p = e.target.closest('[data-preset]'); if (p) { applyPreset(PRESETS[+p.dataset.preset]); commit(); flyTo('overview'); return; }
+  const p = e.target.closest('[data-preset]'); if (p) { applyLook(+p.dataset.preset); return; }
   const v = e.target.closest('[data-view]'); if (v) flyTo(v.dataset.view);
 });
 document.addEventListener('input', e => {
@@ -786,7 +899,17 @@ document.addEventListener('keydown', e => {
 
 const spinBtn = document.getElementById('spinBtn');
 spinBtn.onclick = () => { controls.autoRotate = !controls.autoRotate; spinBtn.classList.toggle('on', controls.autoRotate); spinBtn.setAttribute('aria-pressed', controls.autoRotate); };
-let toastT; function toast(m){ const t = document.getElementById('toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2000); }
+let toastT;
+function toast(m, action, fn){
+  const t = document.getElementById('toast'); t.textContent = m;
+  if (action) {
+    const b = Object.assign(document.createElement('button'), { className: 'tact', textContent: action });
+    b.onclick = () => { clearTimeout(toastT); t.classList.remove('on', 'act'); fn(); };
+    t.append(' · ', b);
+  }
+  t.classList.add('on'); t.classList.toggle('act', !!action);
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on', 'act'), action ? 6000 : 2000);
+}
 document.getElementById('shareBtn').onclick = async () => {
   writeHash(); try { await navigator.clipboard.writeText(location.href); } catch(e) {}
   const l = document.getElementById('shareLbl'); l.textContent = 'Link copied'; toast('Link to this build copied'); setTimeout(() => l.textContent = 'Share', 1500);
@@ -800,9 +923,11 @@ function syncGround(){ const r = document.documentElement; const dark = r.datase
 document.getElementById('themeBtn').onclick = () => {
   const r = document.documentElement;
   const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-  r.dataset.theme = dark ? 'light' : 'dark'; syncGround();
+  r.dataset.theme = dark ? 'light' : 'dark'; syncGround(); queueThumbs();
   try { localStorage.setItem('dh-theme', r.dataset.theme); } catch(e) {}
 };
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!document.documentElement.dataset.theme) { syncGround(); queueThumbs(); } });
+new ResizeObserver(syncLooks).observe(document.getElementById('presets'));
 try { const t = localStorage.getItem('dh-theme'); if (t) document.documentElement.dataset.theme = t; } catch(e) {}
 syncGround();
 updateUI();

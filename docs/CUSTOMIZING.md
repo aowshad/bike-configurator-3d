@@ -38,7 +38,8 @@ Push to `SECTIONS`: `{ id, name, focus:'<VIEWS key>', controls:[…] }`. Add a c
 - Never switch a style with a shader define or a new texture slot. Use the existing uniforms so the page never recompiles.
 
 ## Add a preset
-Push `{ name, c:{ key:index, … } }` to `PRESETS`. Keys you leave out fall back to `DEFAULT`.
+Push `{ name, desc, c:{ key:index, … } }` to `PRESETS`. Keys you leave out fall back to `DEFAULT`.
+`desc` is the one line on the look card. The card price and thumbnail are generated from the look's full build, so there is nothing else to add.
 
 ## Change prices
 - Base price: `BASE_PRICE`.
