@@ -1,0 +1,11 @@
+{
+  "name": "bike-configurator-3d",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Realistic 3D bike configurator in the browser (three.js, no build step).",
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/serve.mjs"
+  },
+  "engines": { "node": ">=18" }
+}

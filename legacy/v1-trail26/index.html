@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bike Configurator Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F5F5F6;--surface:#FFFFFF;--surface-2:#F7F7F8;--hover:#F0F0F2;
+  --border:#E6E6E9;--border-strong:#D2D2D7;--ink:#0B0B0D;--muted:#6B6B73;--faint:#9C9CA4;
+  --btn:#0B0B0D;--btn-ink:#FFFFFF;--ring:#0B0B0D;
+  --stage-a:#FFFFFF;--stage-b:#E9EAEE;
+  --chip:rgb(255 255 255/.86);--edge:rgb(0 0 0/.14);
+  --ease:cubic-bezier(.2,0,0,1);--ease-io:cubic-bezier(.4,0,.2,1);
+  --fast:120ms;--base:180ms;--slow:260ms;
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0B0B0D;--surface:#121214;--surface-2:#17171A;--hover:#1D1D21;
+  --border:#232328;--border-strong:#33333A;--ink:#EDEDEF;--muted:#9C9CA5;--faint:#6E6E77;
+  --btn:#EDEDEF;--btn-ink:#0B0B0D;--ring:#EDEDEF;
+  --stage-a:#2A2B30;--stage-b:#111114;--chip:rgb(22 22 26/.86);--edge:rgb(255 255 255/.18);
+}}
+:root[data-theme="dark"]{
+  --bg:#0B0B0D;--surface:#121214;--surface-2:#17171A;--hover:#1D1D21;
+  --border:#232328;--border-strong:#33333A;--ink:#EDEDEF;--muted:#9C9CA5;--faint:#6E6E77;
+  --btn:#EDEDEF;--btn-ink:#0B0B0D;--ring:#EDEDEF;
+  --stage-a:#2A2B30;--stage-b:#111114;--chip:rgb(22 22 26/.86);--edge:rgb(255 255 255/.18);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;overflow:hidden}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--ring);outline-offset:2px;border-radius:8px}
+
+.app{display:grid;grid-template-columns:minmax(0,1fr) 420px;height:100dvh}
+@media (max-width:900px){
+  body{overflow:auto}
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:56dvh auto;height:auto}
+}
+
+/* stage */
+.stage{position:relative;background:radial-gradient(120% 90% at 50% 38%,var(--stage-a) 0%,var(--stage-b) 100%);overflow:hidden;min-height:320px}
+@media (max-width:900px){.stage{position:sticky;top:0;z-index:2;height:56dvh}}
+canvas{display:block;width:100%;height:100%;touch-action:none;outline:none}
+.brandmark{position:absolute;z-index:1;top:16px;left:20px;padding:6px 10px;border-radius:10px;background:var(--chip);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);font-weight:600;font-size:15px;letter-spacing:-.01em}
+.brandmark span{color:var(--muted);font-weight:500;margin-left:8px;font-size:12px;padding:2px 8px;border:1px solid var(--border-strong);border-radius:999px}
+.hint{position:absolute;top:22px;right:24px;color:var(--muted);font-size:12px;transition:opacity var(--slow) var(--ease)}
+@media (max-width:640px){.hint{display:none}.brandmark{left:16px;top:16px}}
+
+.toolbar{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);display:flex;gap:4px;padding:4px;background:var(--chip);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 24px -12px rgb(0 0 0/.25)}
+.tb{height:34px;min-width:34px;padding:0 10px;border:0;background:transparent;border-radius:8px;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500;color:var(--muted);transition:background-color var(--fast) var(--ease),color var(--fast) var(--ease)}
+.tb svg{width:16px;height:16px}
+.tb.on{color:var(--ink);background:var(--hover)}
+@media (hover:hover){.tb:hover{color:var(--ink);background:var(--hover)}}
+.tb:active{transform:scale(.97)}
+.tbsep{width:1px;background:var(--border);margin:6px 2px}
+@media (max-width:520px){.tb .lbl{display:none}}
+
+.loader{position:absolute;inset:0;display:grid;place-items:center;transition:opacity var(--slow) var(--ease)}
+.loader.done{opacity:0;pointer-events:none}
+.loader .box{width:220px;text-align:center;color:var(--muted);font-size:13px}
+.bar{height:3px;border-radius:2px;background:var(--border);margin-top:10px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--ink);transition:width var(--base) var(--ease)}
+
+.partTip{position:absolute;pointer-events:none;padding:4px 10px;border-radius:999px;background:var(--chip);backdrop-filter:blur(10px);border:1px solid var(--border);font-size:12px;font-weight:500;transform:translate(-50%,-140%);opacity:0;transition:opacity var(--fast) var(--ease);white-space:nowrap}
+.partTip.on{opacity:1}
+
+/* panel */
+.panel{background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;min-height:0;min-width:0}
+@media (max-width:900px){.panel{border-left:0;border-top:1px solid var(--border)}}
+.phead{padding:24px 24px 16px}
+.eyebrow{font-size:12px;color:var(--muted);font-weight:500}
+.title{font-size:26px;line-height:32px;font-weight:600;letter-spacing:-.02em;margin:2px 0 4px}
+.desc{color:var(--muted);font-size:13px;margin:0}
+.presets{display:flex;gap:8px;overflow-x:auto;padding:16px 24px 4px;scrollbar-width:none}
+.presets::-webkit-scrollbar{display:none}
+.preset{flex:none;display:flex;align-items:center;gap:8px;height:34px;padding:0 12px 0 6px;border:1px solid var(--border);background:var(--surface);border-radius:999px;font-size:13px;font-weight:500;transition:border-color var(--fast) var(--ease),background-color var(--fast) var(--ease)}
+.preset .dots{display:flex}
+.preset .dots i{width:18px;height:18px;border-radius:50%;border:2px solid var(--surface);margin-left:-6px;box-shadow:inset 0 0 0 1px var(--edge)}
+.preset .dots i:first-child{margin-left:0}
+@media (hover:hover){.preset:hover{border-color:var(--border-strong);background:var(--surface-2)}}
+.preset.on{border-color:var(--ink)}
+.plabel{padding:16px 24px 8px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+
+.sections{flex:1;overflow-y:auto;padding:0 12px 16px;min-height:0}
+@media (max-width:900px){.sections{overflow:visible}}
+.sec{border-radius:12px;transition:background-color var(--base) var(--ease)}
+.sec.open{background:var(--surface-2)}
+.sec+.sec{margin-top:2px}
+.shead{width:100%;display:flex;align-items:center;gap:12px;padding:12px;border:0;background:transparent;border-radius:12px;text-align:left}
+@media (hover:hover){.sec:not(.open) .shead:hover{background:var(--hover)}}
+.sdot{width:22px;height:22px;border-radius:50%;flex:none;box-shadow:inset 0 0 0 1px var(--edge);transition:background var(--slow) var(--ease)}
+.sname{font-weight:600;font-size:14px}
+.sval{margin-left:auto;color:var(--muted);font-size:13px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%}
+.chev{width:16px;height:16px;color:var(--faint);flex:none;transition:transform var(--base) var(--ease)}
+.sec.open .chev{transform:rotate(180deg)}
+.sbody{display:grid;grid-template-rows:0fr;transition:grid-template-rows var(--slow) var(--ease)}
+.sec.open .sbody{grid-template-rows:1fr}
+.sbody>div{overflow:hidden}
+.sinner{padding:0 12px 16px 46px}
+@media (max-width:420px){.sinner{padding-left:12px}}
+.glabel{font-size:12px;color:var(--muted);margin:4px 0 8px;display:flex;gap:6px}
+.glabel b{color:var(--ink);font-weight:500}
+.swatches{display:flex;flex-wrap:wrap;gap:10px}
+.sw{position:relative;width:34px;height:34px;border-radius:50%;border:0;padding:0;background:transparent}
+.sw i{position:absolute;inset:3px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--edge)}
+.sw:before{content:"";position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 1.5px transparent;transition:box-shadow var(--base) var(--ease)}
+.sw[aria-checked="true"]:before{box-shadow:0 0 0 2px var(--ink)}
+@media (hover:hover){.sw:hover:not([aria-checked="true"]):before{box-shadow:0 0 0 1.5px var(--border-strong)}}
+.sw .plus{position:absolute;top:-5px;right:-7px;font-size:9px;font-weight:600;background:var(--ink);color:var(--surface);border-radius:999px;padding:1px 4px;line-height:12px}
+.seg{display:inline-flex;gap:2px;padding:3px;background:var(--hover);border-radius:10px;margin-top:14px;position:relative}
+.seg button{position:relative;z-index:1;border:0;background:transparent;padding:6px 12px;border-radius:7px;font-size:13px;font-weight:500;color:var(--muted);transition:color var(--fast) var(--ease)}
+.seg button[aria-checked="true"]{color:var(--ink)}
+.seg .ind{position:absolute;top:3px;bottom:3px;left:0;border-radius:7px;background:var(--surface);box-shadow:0 1px 2px rgb(0 0 0/.1);transition:transform var(--base) var(--ease-io),width var(--base) var(--ease-io)}
+.seg small{font-size:11px;color:var(--faint);margin-left:4px}
+
+.foot{border-top:1px solid var(--border);padding:16px 24px calc(16px + env(safe-area-inset-bottom));background:var(--surface)}
+@media (max-width:900px){.foot{position:sticky;bottom:0}}
+.price{display:flex;align-items:baseline;gap:4px 8px;flex-wrap:wrap}
+.price .total{font-size:22px;font-weight:600;letter-spacing:-.01em}
+.price .extra{font-size:12px;color:var(--muted)}
+.price .ship{flex-basis:100%;font-size:12px;color:var(--muted)}
+.actions{display:flex;gap:8px;margin-top:12px}
+.btn{height:44px;border-radius:10px;border:1px solid var(--border-strong);background:var(--surface);padding:0 14px;font-weight:600;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:background-color var(--fast) var(--ease),transform 80ms var(--ease)}
+.btn svg{width:16px;height:16px}
+.btn.primary{flex:1;background:var(--btn);color:var(--btn-ink);border-color:var(--btn)}
+@media (hover:hover){.btn:not(.primary):hover{background:var(--hover)}.btn.primary:hover{opacity:.92}}
+.btn:active{transform:scale(.98)}
+
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,8px);opacity:0;background:var(--ink);color:var(--surface);padding:10px 16px;border-radius:10px;font-size:13px;font-weight:500;z-index:20;transition:opacity var(--slow) var(--ease),transform var(--slow) var(--ease);pointer-events:none}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+@media (prefers-reduced-motion:reduce){*,*:before{transition-duration:.01ms!important;animation-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="stage" id="stage" aria-label="3D bike preview">
+    <div class="brandmark">Trail 26 <span>Demo</span></div>
+    <div class="hint" id="hint">Drag to rotate · Scroll to zoom · Click a part to edit it</div>
+    <div class="loader" id="loader"><div class="box"><div id="loadTxt">Loading bike… 0%</div><div class="bar"><i id="loadBar"></i></div></div></div>
+    <div class="partTip" id="partTip"></div>
+    <div class="toolbar" role="toolbar" aria-label="View controls">
+      <button class="tb" data-view="overview" title="Full view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V5a2 2 0 0 1 2-2h4M15 3h4a2 2 0 0 1 2 2v4M21 15v4a2 2 0 0 1-2 2h-4M9 21H5a2 2 0 0 1-2-2v-4"/></svg><span class="lbl">Full view</span></button>
+      <button class="tb" data-view="side" title="Side view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="16" r="3.5"/><circle cx="18.5" cy="16" r="3.5"/><path d="M5.5 16 9 8h6l3.5 8M9 8l3 8 3-8M8 6h3"/></svg><span class="lbl">Side</span></button>
+      <button class="tb" id="spinBtn" title="Auto-rotate" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg><span class="lbl">Rotate</span></button>
+      <span class="tbsep"></span>
+      <button class="tb" id="shotBtn" title="Save image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg><span class="lbl">Image</span></button>
+      <button class="tb" id="themeBtn" title="Theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z"/></svg></button>
+    </div>
+  </section>
+
+  <aside class="panel" aria-label="Configure your bike">
+    <div class="phead">
+      <div class="eyebrow">Full-suspension mountain bike</div>
+      <div class="title">Trail 26</div>
+      <p class="desc">Pick colors and finishes for every part. Your bike updates live.</p>
+    </div>
+    <div class="plabel" style="padding-top:0">Start from a look</div>
+    <div class="presets" id="presets"></div>
+    <div class="plabel">Customize</div>
+    <div class="sections" id="sections"></div>
+    <div class="foot">
+      <div class="price"><span class="total" id="total">€1,299</span><span class="extra" id="extra"></span><span class="ship">Free shipping · Ships in 2–3 weeks</span></div>
+      <div class="actions">
+        <button class="btn" id="shareBtn" title="Copy a link to this build"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg><span id="shareLbl">Share</span></button>
+        <button class="btn primary" id="cartBtn">Add to cart</button>
+      </div>
+    </div>
+  </aside>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const BASE_PRICE = 1299;
+
+/* ---------------- configuration data ---------------- */
+const PAINT = [
+  ['Racing Red','#B5121B'],['Jet Black','#141416'],['Arctic White','#EDEDEA'],['Pastel Mint','#9BD3BE'],
+  ['Ocean Blue','#1E5AA8'],['Forest Green','#2E5A44'],['Sunset Orange','#E8641E'],['Desert Sand','#C9B28F'],
+  ['Lavender','#A597D6'],['Graphite','#45484D'],['Sun Yellow','#EDBB27'],['Petrol','#0E5A66'],
+];
+const SECTIONS = [
+  { id:'frame', name:'Frame', parts:['frame'], focus:'frame',
+    colors: PAINT, finishes:[['Gloss',0],['Satin',0],['Matte',0],['Metallic',49]] },
+  { id:'saddle', name:'Saddle', parts:['saddle'], focus:'saddle',
+    colors:[['Black','#141414'],['Brown Leather','#6B3F22',29],['Tan Leather','#B07A45',29],['Cream','#E9E1CF'],['Navy','#1E2A44']] },
+  { id:'grips', name:'Grips', parts:['grips'], focus:'cockpit',
+    colors:[['Black','#151515'],['Brown','#6B3F22'],['Red','#B5121B'],['Blue','#1E5AA8'],['Mint','#9BD3BE'],['Orange','#E8641E']] },
+  { id:'cockpit', name:'Handlebar & post', parts:['handlebar','cockpit','seatpost'], focus:'cockpit',
+    colors:[['Black','#1A1A1C'],['Silver','#C9CCD1'],['Gunmetal','#55585E']], metal:true },
+  { id:'tires', name:'Tires', parts:['tires'], focus:'wheel',
+    colors:[['Black','#1A1A1A'],['Charcoal','#3A3A3C'],['Gum Brown','#6A4A2E',19],['Sand','#BBA37E',19]] },
+  { id:'wheels', name:'Rims & spokes', parts:['rims','hubs'], focus:'wheel',
+    colors:[['Black','#18181A'],['Silver','#C9CCD1'],['Gold','#C9A24A',39],['Red','#A3121B',39],['Blue','#1E5AA8',39]], metal:true,
+    sub:{ label:'Spokes', parts:['spokes'], options:[['Silver','#D3D6DA'],['Black','#202022']] } },
+  { id:'shock', name:'Suspension spring', parts:['shockSpring'], focus:'shock',
+    colors:[['Black','#1A1A1C'],['Red','#C0151F'],['Gold','#D4A73A'],['Orange','#EA6A1F'],['Mint','#8FD0B6'],['Blue','#2463B8']] },
+  { id:'chain', name:'Chain', parts:['chain'], focus:'drive',
+    colors:[['Silver','#BFC3C8'],['Black','#1E1E20'],['Gold','#D1A843',25],['Oil Slick','#7C6F92',35]], metal:true },
+  { id:'drive', name:'Drivetrain', parts:['chainring','cassette','cranks'], focus:'drive',
+    colors:[['Silver','#C4C7CC'],['Black','#1C1C1E'],['Gold','#C9A24A',45]], metal:true },
+  { id:'pedals', name:'Pedals', parts:['pedals'], focus:'pedals',
+    colors:[['Black','#18181A'],['Red','#B5121B'],['Blue','#1E5AA8'],['Orange','#E8641E'],['Gold','#C9A24A']] },
+];
+const PART_SECTION = {}; SECTIONS.forEach(s=>{s.parts.forEach(p=>PART_SECTION[p]=s.id); if(s.sub) s.sub.parts.forEach(p=>PART_SECTION[p]=s.id)});
+PART_SECTION.shockBody='shock';
+const PART_LABEL = {frame:'Frame',saddle:'Saddle',grips:'Grips',handlebar:'Handlebar',cockpit:'Stem',seatpost:'Seat post',tires:'Tires',rims:'Rims',hubs:'Hubs',spokes:'Spokes',shockSpring:'Suspension spring',shockBody:'Shock',chain:'Chain',chainring:'Chainring',cassette:'Cassette',cranks:'Cranks',pedals:'Pedals',hardware:'Hardware'};
+
+const PRESETS = [
+  { name:'Classic Red', c:{frame:0,finish:0,saddle:0,grips:0,cockpit:0,tires:0,wheels:1,spokes:0,shock:0,chain:0,drive:0,pedals:0} },
+  { name:'Stealth', c:{frame:1,finish:2,saddle:0,grips:0,cockpit:0,tires:0,wheels:0,spokes:1,shock:0,chain:1,drive:1,pedals:0} },
+  { name:'Mint Ride', c:{frame:3,finish:0,saddle:1,grips:1,cockpit:1,tires:2,wheels:1,spokes:0,shock:0,chain:0,drive:0,pedals:0} },
+  { name:'Sunset', c:{frame:6,finish:3,saddle:0,grips:0,cockpit:0,tires:0,wheels:2,spokes:1,shock:2,chain:3,drive:2,pedals:4} },
+  { name:'Ocean', c:{frame:4,finish:1,saddle:4,grips:3,cockpit:1,tires:1,wheels:1,spokes:0,shock:4,chain:0,drive:0,pedals:2} },
+];
+
+/* config state (indexes into option arrays) */
+const state = { ...PRESETS[0].c };
+const keyOf = id => id; // section id is the state key
+function readHash(){
+  const p = new URLSearchParams(location.hash.slice(1));
+  for (const k of Object.keys(state)) if (p.has(k)) { const v = +p.get(k); if (Number.isInteger(v) && v>=0) state[k]=v; }
+}
+function writeHash(){
+  const p = new URLSearchParams(); for (const [k,v] of Object.entries(state)) p.set(k,v);
+  try { history.replaceState(null,'','#'+p.toString()); } catch(e) {}
+}
+readHash();
+
+/* ---------------- renderer / scene ---------------- */
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, preserveDrawingBuffer:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+stage.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.85;
+
+const camera = new THREE.PerspectiveCamera(32, 1, 0.05, 50);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.enablePan = false;
+controls.minDistance = 0.55; controls.maxDistance = 4.2;
+controls.maxPolarAngle = THREE.MathUtils.degToRad(86);
+controls.autoRotateSpeed = 0.8;
+
+const key = new THREE.DirectionalLight(0xffffff, 1.6);
+key.position.set(1.6, 3.4, 2.2);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -1.4; key.shadow.camera.right = 1.4; key.shadow.camera.top = 1.4; key.shadow.camera.bottom = -1.4;
+key.shadow.camera.near = 0.5; key.shadow.camera.far = 8;
+key.shadow.bias = -0.0004; key.shadow.normalBias = 0.01; key.shadow.radius = 6;
+scene.add(key);
+const rim = new THREE.DirectionalLight(0xffffff, 0.5); rim.position.set(-2, 2, -2); scene.add(rim);
+
+const ground = new THREE.Mesh(new THREE.CircleGeometry(3, 64), new THREE.ShadowMaterial({ opacity: 0.22 }));
+ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
+
+/* ---------------- camera views ---------------- */
+const VIEWS = {
+  overview:{ cam:[1.15,1.05,2.55], tgt:[0,0.55,0] },
+  side:    { cam:[0,0.62,3.1],     tgt:[0,0.55,0] },
+  frame:   { cam:[0.7,1.05,2.75],  tgt:[0,0.58,0] },
+  saddle:  { cam:[-0.95,1.35,1.05],tgt:[-0.27,0.98,0] },
+  cockpit: { cam:[1.2,1.45,0.95],  tgt:[0.45,1.0,0] },
+  wheel:   { cam:[1.45,0.75,1.35], tgt:[0.6,0.4,0] },
+  shock:   { cam:[-0.4,1.0,1.35],tgt:[-0.1,0.64,0] },
+  drive:   { cam:[-0.5,0.72,1.65], tgt:[-0.3,0.42,0.05] },
+  pedals:  { cam:[0.4,0.62,1.4], tgt:[-0.1,0.35,0.06] },
+};
+let tween = null;
+function flyTo(name){
+  const v = VIEWS[name]; if (!v) return;
+  const from = { c:camera.position.clone(), t:controls.target.clone() };
+  const to = { c:new THREE.Vector3(...v.cam), t:new THREE.Vector3(...v.tgt) };
+  // portrait screens: pull the camera back so the bike still fits the width
+  const f = THREE.MathUtils.clamp(1.1 / camera.aspect, 1, 2);
+  to.c.sub(to.t).multiplyScalar(f).add(to.t);
+  if (reduceMotion) { camera.position.copy(to.c); controls.target.copy(to.t); return; }
+  tween = { from, to, start:performance.now(), dur:900 };
+  document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('on', b.dataset.view===name));
+}
+const easeInOut = t => t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
+
+/* ---------------- materials ---------------- */
+const M = {};
+function phys(o){ return new THREE.MeshPhysicalMaterial(o); }
+M.frame = phys({ color:'#B5121B', roughness:.32, metalness:.15, clearcoat:1, clearcoatRoughness:.06 });
+M.saddle = phys({ color:'#141414', roughness:.6, metalness:0, clearcoat:.25, clearcoatRoughness:.5, sheen:.3, sheenRoughness:.8 });
+M.grips = phys({ color:'#151515', roughness:.88, metalness:0 });
+M.handlebar = phys({ color:'#1A1A1C', roughness:.35, metalness:.85 });
+M.cockpit = M.handlebar; M.seatpost = M.handlebar;
+M.tires = phys({ color:'#1A1A1A', roughness:.92, metalness:0 });
+M.rims = phys({ color:'#C9CCD1', roughness:.28, metalness:.95 });
+M.hubs = M.rims;
+M.spokes = phys({ color:'#D3D6DA', roughness:.22, metalness:1 });
+M.shockSpring = phys({ color:'#C0151F', roughness:.38, metalness:.2, clearcoat:.8, clearcoatRoughness:.15 });
+M.shockBody = phys({ color:'#1E1E20', roughness:.3, metalness:.9 });
+M.chain = phys({ color:'#BFC3C8', roughness:.3, metalness:1, iridescenceIOR:1.8, iridescenceThicknessRange:[250,900] });
+M.chainring = phys({ color:'#C4C7CC', roughness:.3, metalness:1 });
+M.cassette = M.chainring; M.cranks = M.chainring;
+M.pedals = phys({ color:'#18181A', roughness:.45, metalness:.6 });
+M.hardware = phys({ color:'#2A2A2D', roughness:.35, metalness:.9 });
+
+const FINISH = [
+  { roughness:.32, metalness:.15, clearcoat:1,  clearcoatRoughness:.06 }, // gloss
+  { roughness:.5,  metalness:.1,  clearcoat:.5, clearcoatRoughness:.35 }, // satin
+  { roughness:.85, metalness:.05, clearcoat:0,  clearcoatRoughness:1 },   // matte
+  { roughness:.28, metalness:.75, clearcoat:1,  clearcoatRoughness:.05 }, // metallic
+];
+
+/* smooth color/finish transitions */
+const anims = new Map();
+function animateMat(mat, target){
+  const from = { color: mat.color.clone() };
+  for (const k of Object.keys(target)) if (k!=='color') from[k] = mat[k];
+  const to = { ...target, color: target.color ? new THREE.Color(target.color) : from.color };
+  if (reduceMotion) { apply(mat, from, to, 1); return; }
+  anims.set(mat, { from, to, start: performance.now(), dur: 320 });
+}
+function apply(mat, from, to, t){
+  mat.color.copy(from.color).lerp(to.color, t);
+  for (const k of Object.keys(to)) if (k!=='color' && typeof to[k]==='number') mat[k] = from[k] + (to[k]-from[k])*t;
+}
+
+function applyState(instant=false){
+  for (const s of SECTIONS){
+    const opt = s.colors[state[s.id]] || s.colors[0];
+    const target = { color: opt[1] };
+    if (s.id==='frame') Object.assign(target, FINISH[state.finish] || FINISH[0]);
+    if (s.id==='chain') { target.iridescence = opt[0]==='Oil Slick' ? 1 : 0; target.roughness = opt[0]==='Oil Slick' ? .18 : .3; }
+    const mats = new Set(s.parts.map(p=>M[p]));
+    mats.forEach(m => instant ? (()=>{ const f={color:m.color.clone()}; for(const k in target) if(k!=='color') f[k]=m[k]; apply(m,f,{...target,color:new THREE.Color(target.color)},1); })() : animateMat(m, target));
+    if (s.sub){ const so = s.sub.options[state.spokes] || s.sub.options[0]; instant ? M.spokes.color.set(so[1]) : animateMat(M.spokes, { color: so[1] }); }
+  }
+  updateUI();
+}
+
+/* ---------------- load model ---------------- */
+const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
+const pickables = [];
+loader.load('bike.glb', gltf => {
+  const bike = gltf.scene;
+  bike.traverse(o => {
+    if (!o.isMesh) return;
+    const part = o.name || o.material?.name;
+    o.material = M[part] || M.hardware;
+    o.userData.part = part;
+    o.castShadow = true; o.receiveShadow = true;
+    pickables.push(o);
+  });
+  scene.add(bike);
+  applyState(true);
+  document.getElementById('loader').classList.add('done');
+  flyTo('overview');
+}, e => {
+  if (!e.total) return;
+  const p = Math.round(e.loaded / e.total * 100);
+  document.getElementById('loadTxt').textContent = `Loading bike… ${p}%`;
+  document.getElementById('loadBar').style.width = p + '%';
+}, err => { document.getElementById('loadTxt').textContent = 'Could not load the 3D model.'; console.error(err); });
+
+camera.position.set(2.2, 1.4, 3.6); controls.target.set(0, .55, 0);
+
+/* ---------------- render loop ---------------- */
+function resize(){
+  const r = stage.getBoundingClientRect();
+  renderer.setSize(r.width, r.height, false);
+  camera.aspect = r.width / r.height;
+  camera.fov = camera.aspect < 0.9 ? 44 : 32;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage); resize();
+
+renderer.setAnimationLoop(now => {
+  if (tween){
+    const t = Math.min(1, (now - tween.start) / tween.dur), k = easeInOut(t);
+    camera.position.lerpVectors(tween.from.c, tween.to.c, k);
+    controls.target.lerpVectors(tween.from.t, tween.to.t, k);
+    if (t >= 1) tween = null;
+  }
+  for (const [mat, a] of anims){
+    const t = Math.min(1, (now - a.start) / a.dur);
+    apply(mat, a.from, a.to, 1 - Math.pow(1 - t, 3));
+    if (t >= 1) anims.delete(mat);
+  }
+  controls.update();
+  renderer.render(scene, camera);
+});
+controls.addEventListener('start', () => { tween = null; document.getElementById('hint').style.opacity = 0; document.querySelectorAll('[data-view]').forEach(b=>b.classList.remove('on')); });
+
+/* click a part → open its section */
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+let down = null;
+renderer.domElement.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener('pointerup', e => {
+  if (!down || Math.hypot(e.clientX-down[0], e.clientY-down[1]) > 5) return;
+  const hit = pick(e); if (!hit) return;
+  const sec = PART_SECTION[hit.object.userData.part];
+  if (sec) { openSection(sec, true); showTip(e, PART_LABEL[hit.object.userData.part] || 'Part'); }
+});
+function pick(e){
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  return ray.intersectObjects(pickables, false)[0];
+}
+const tip = document.getElementById('partTip'); let tipT;
+function showTip(e, label){
+  const r = stage.getBoundingClientRect();
+  tip.textContent = label; tip.style.left = (e.clientX - r.left) + 'px'; tip.style.top = (e.clientY - r.top) + 'px';
+  tip.classList.add('on'); clearTimeout(tipT); tipT = setTimeout(()=>tip.classList.remove('on'), 1200);
+}
+
+/* ---------------- UI ---------------- */
+const fmt = n => '€' + n.toLocaleString('en-US');
+const secEl = document.getElementById('sections');
+const chev = '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+
+function swatchGroup(name, opts, stateKey){
+  return `<div class="swatches" role="radiogroup" aria-label="${name}">` + opts.map((o,i)=>
+    `<button class="sw" role="radio" aria-checked="false" data-k="${stateKey}" data-i="${i}" title="${o[0]}${o[2]?` (+${fmt(o[2])})`:''}" aria-label="${o[0]}${o[2]?`, plus ${fmt(o[2])}`:''}"><i style="background:${o[0]==='Oil Slick'?'conic-gradient(from 200deg,#6a5acd,#2bb3a3,#d4b13c,#c2457a,#6a5acd)':o[1]}"></i>${o[2]?'<span class="plus">+'+o[2]+'</span>':''}</button>`).join('') + '</div>';
+}
+secEl.innerHTML = SECTIONS.map(s => `
+  <div class="sec" id="sec-${s.id}">
+    <button class="shead" aria-expanded="false" aria-controls="body-${s.id}" data-sec="${s.id}">
+      <span class="sdot" id="dot-${s.id}"></span><span class="sname">${s.name}</span><span class="sval" id="val-${s.id}"></span>${chev}
+    </button>
+    <div class="sbody" id="body-${s.id}"><div><div class="sinner">
+      <div class="glabel">Color <b id="cl-${s.id}"></b></div>
+      ${swatchGroup(s.name+' color', s.colors, s.id)}
+      ${s.finishes ? `<div class="seg" role="radiogroup" aria-label="Finish" id="seg-finish"><span class="ind"></span>${s.finishes.map((f,i)=>`<button role="radio" aria-checked="false" data-k="finish" data-i="${i}">${f[0]}${f[1]?`<small>+${f[1]}</small>`:''}</button>`).join('')}</div>` : ''}
+      ${s.sub ? `<div class="glabel" style="margin-top:16px">${s.sub.label} <b id="cl-spokes"></b></div>${swatchGroup(s.sub.label, s.sub.options, 'spokes')}` : ''}
+    </div></div></div>
+  </div>`).join('');
+
+const presetsEl = document.getElementById('presets');
+presetsEl.innerHTML = PRESETS.map((p,i)=>{
+  const dots = [PAINT[p.c.frame][1], SECTIONS[1].colors[p.c.saddle][1], SECTIONS[5].colors[p.c.wheels][1]];
+  return `<button class="preset" data-preset="${i}"><span class="dots">${dots.map(c=>`<i style="background:${c}"></i>`).join('')}</span>${p.name}</button>`;
+}).join('');
+
+function extras(){
+  let sum = 0; const items = [];
+  for (const s of SECTIONS){ const o = s.colors[state[s.id]]; if (o?.[2]) { sum += o[2]; items.push(o[0]); } }
+  const f = SECTIONS[0].finishes[state.finish]; if (f?.[1]) sum += f[1];
+  return sum;
+}
+function updateUI(){
+  for (const s of SECTIONS){
+    const o = s.colors[state[s.id]] || s.colors[0];
+    let val = o[0];
+    if (s.id==='frame') val += ' · ' + SECTIONS[0].finishes[state.finish][0];
+    document.getElementById('val-'+s.id).textContent = val;
+    document.getElementById('cl-'+s.id).textContent = o[0] + (o[2] ? ` · +${fmt(o[2])}` : '');
+    document.getElementById('dot-'+s.id).style.background = o[0]==='Oil Slick' ? 'conic-gradient(from 200deg,#6a5acd,#2bb3a3,#d4b13c,#c2457a,#6a5acd)' : o[1];
+  }
+  const sp = SECTIONS[5].sub.options[state.spokes]; document.getElementById('cl-spokes').textContent = sp[0];
+  document.querySelectorAll('[data-k]').forEach(b => b.setAttribute('aria-checked', String(+b.dataset.i === state[b.dataset.k])));
+  const ex = extras();
+  document.getElementById('total').textContent = fmt(BASE_PRICE + ex);
+  document.getElementById('extra').textContent = ex ? `incl. ${fmt(ex)} in upgrades` : '';
+  const match = PRESETS.findIndex(p => Object.keys(p.c).every(k => p.c[k] === state[k]));
+  document.querySelectorAll('.preset').forEach((b,i)=>b.classList.toggle('on', i===match));
+  placeIndicator();
+}
+function placeIndicator(){
+  const seg = document.getElementById('seg-finish'); if (!seg) return;
+  const on = seg.querySelector('[aria-checked="true"]'); const ind = seg.querySelector('.ind');
+  if (!on || !on.offsetWidth) return;
+  ind.style.width = on.offsetWidth + 'px'; ind.style.transform = `translateX(${on.offsetLeft}px)`;
+}
+
+function openSection(id, fromModel=false){
+  document.querySelectorAll('.sec').forEach(el => {
+    const open = el.id === 'sec-'+id && (fromModel || !el.classList.contains('open'));
+    el.classList.toggle('open', open);
+    el.querySelector('.shead').setAttribute('aria-expanded', String(open));
+  });
+  const el = document.getElementById('sec-'+id);
+  const s = SECTIONS.find(x=>x.id===id);
+  if (el.classList.contains('open')) { flyTo(s.focus); setTimeout(()=>{ placeIndicator(); el.scrollIntoView({ block:'nearest', behavior: reduceMotion?'auto':'smooth' }); }, 280); }
+}
+
+document.addEventListener('click', e => {
+  const h = e.target.closest('[data-sec]'); if (h) { openSection(h.dataset.sec); return; }
+  const o = e.target.closest('[data-k]');
+  if (o) { state[o.dataset.k] = +o.dataset.i; applyState(); writeHash(); return; }
+  const p = e.target.closest('[data-preset]');
+  if (p) { Object.assign(state, PRESETS[+p.dataset.preset].c); applyState(); writeHash(); flyTo('overview'); return; }
+  const v = e.target.closest('[data-view]'); if (v) flyTo(v.dataset.view);
+});
+// arrow keys inside radio groups
+document.addEventListener('keydown', e => {
+  const b = e.target.closest('[role="radio"]'); if (!b || !['ArrowRight','ArrowLeft','ArrowDown','ArrowUp'].includes(e.key)) return;
+  const list = [...b.parentElement.querySelectorAll('[role="radio"]')]; let i = list.indexOf(b);
+  i = (i + (e.key==='ArrowRight'||e.key==='ArrowDown' ? 1 : -1) + list.length) % list.length;
+  list[i].focus(); list[i].click(); e.preventDefault();
+});
+
+const spinBtn = document.getElementById('spinBtn');
+spinBtn.onclick = () => { controls.autoRotate = !controls.autoRotate; spinBtn.classList.toggle('on', controls.autoRotate); spinBtn.setAttribute('aria-pressed', controls.autoRotate); };
+
+let toastT; function toast(m){ const t=document.getElementById('toast'); t.textContent=m; t.classList.add('on'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),2000); }
+document.getElementById('shareBtn').onclick = async () => {
+  writeHash();
+  try { await navigator.clipboard.writeText(location.href); } catch(e) {}
+  const l = document.getElementById('shareLbl'); l.textContent = 'Link copied'; toast('Link to this build copied');
+  setTimeout(()=>l.textContent='Share', 1500);
+};
+document.getElementById('cartBtn').onclick = () => toast(`Demo only · ${document.getElementById('total').textContent} build added to cart`);
+document.getElementById('shotBtn').onclick = () => {
+  renderer.render(scene, camera);
+  const a = document.createElement('a'); a.download = 'trail-26-build.png'; a.href = renderer.domElement.toDataURL('image/png'); a.click();
+  toast('Image saved');
+};
+document.getElementById('themeBtn').onclick = () => {
+  const r = document.documentElement;
+  const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  r.dataset.theme = dark ? 'light' : 'dark';
+  ground.material.opacity = dark ? 0.22 : 0.45;
+  try { localStorage.setItem('bike-theme', r.dataset.theme); } catch(e) {}
+};
+try { const t = localStorage.getItem('bike-theme'); if (t) { document.documentElement.dataset.theme = t; ground.material.opacity = t==='dark' ? .45 : .22; } } catch(e) {}
+if (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches) ground.material.opacity = .45;
+
+updateUI();
+addEventListener('resize', placeIndicator);
+</script>
+</body>
+</html>

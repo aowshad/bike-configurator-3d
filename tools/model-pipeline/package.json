@@ -1,0 +1,15 @@
+{
+  "name": "bike-model-pipeline",
+  "private": true,
+  "type": "module",
+  "description": "Turns the Blender source model into the web-ready assets/models/bike.glb",
+  "scripts": {
+    "optimize": "node --max-old-space-size=12288 optimize.mjs fuzz_full.glb ../../assets/models/bike.glb"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "meshoptimizer": "^1.3.0"
+  }
+}

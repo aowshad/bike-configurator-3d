@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- Debug viewer: highlights one material or node in red so you can map parts to slots.
+     Open: http://localhost:5181/tools/debug-materials.html?mat=Material.018  or  ?node=Shock -->
+<html><head><meta charset="utf-8"><title>Material debug</title>
+<style>html,body{margin:0;height:100%;background:#ddd}canvas{width:100%;height:100%;display:block}#l{position:fixed;top:8px;left:8px;font:12px Inter,system-ui,sans-serif;background:#fff;padding:6px 8px;border-radius:6px;max-height:95vh;overflow:auto}</style></head>
+<body><div id="l"></div>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+const r = new THREE.WebGLRenderer({ antialias:true }); r.setPixelRatio(devicePixelRatio); document.body.appendChild(r.domElement);
+const s = new THREE.Scene(); s.background = new THREE.Color('#ddd');
+s.environment = new THREE.PMREMGenerator(r).fromScene(new RoomEnvironment(), .04).texture;
+const c = new THREE.PerspectiveCamera(30, 1, .01, 50); c.position.set(0, .7, 3.4);
+const o = new OrbitControls(c, r.domElement); o.target.set(0, .5, 0);
+const rs = () => { r.setSize(innerWidth, innerHeight, false); c.aspect = innerWidth / innerHeight; c.updateProjectionMatrix(); };
+addEventListener('resize', rs); rs();
+const q = new URLSearchParams(location.search), mat = q.get('mat'), node = q.get('node');
+new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('../assets/models/bike.glb', g => {
+  const b = g.scene; b.rotation.y = -Math.PI / 2; s.add(b); const seen = new Set();
+  b.traverse(m => {
+    if (!m.isMesh) return;
+    const nn = (m.parent && m.parent !== b) ? m.parent.name : m.name;
+    seen.add(nn + ' / ' + m.material.name);
+    if (mat || node) {
+      const hit = (mat && m.material.name === mat) || (node && nn === node);
+      m.material = new THREE.MeshStandardMaterial({ color: hit ? '#e01' : '#bbb', roughness: .6, transparent: !hit, opacity: hit ? 1 : .25 });
+    }
+  });
+  document.getElementById('l').innerHTML = [...seen].sort().join('<br>');
+});
+r.setAnimationLoop(() => { o.update(); r.render(s, c); });
+</script></body></html>

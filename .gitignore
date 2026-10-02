@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+# Heavy source/intermediate 3D files: keep them outside git (see docs/MODEL-PIPELINE.md)
+*.blend
+*.blend1
+*.rar
+*.zip
+tools/model-pipeline/*.glb
+tools/model-pipeline/textures/
