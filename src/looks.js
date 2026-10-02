@@ -321,7 +321,7 @@ export class Deformer {
   // called every frame; returns true while animating
   step(now){
     if (!this.anim) return false;
-    const t = Math.min(1, (now - this.anim.start) / this.dur), k = t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    const t = Math.min(1, Math.max(0, (now - this.anim.start) / this.dur)), k = t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
     this.items.forEach((it, i) => this.write(it, this.anim.from[i], this.anim.to[i], k));
     if (t >= 1) this.anim = null;
     return true;

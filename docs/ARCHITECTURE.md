@@ -107,6 +107,13 @@ Details per style:
   flatten each spoke's cross-section (wider along the axle, thinner in the direction of travel). Nipple pieces are found by connectivity
   (`pieces()`), which also gives each nipple its own vertex color for "Rainbow".
 
+## Section rows
+
+Each row shows a 36px icon tile (`SECTION_ICONS`) with the part's current color as a 13px badge (`dotColor()`, conic gradient for Oil Slick).
+Hovering or keyboard-focusing a row makes that section's materials glow (`highlight()`): every highlightable material gets a white
+`emissive` at load and only `emissiveIntensity` animates (a uniform), rising to .2 over 180 ms, settling to .09, and fading out over 260 ms.
+On touch, the glow plays once when a section opens. Materials come from `SLOT_SECTION`, plus the nipples (anodized) and all decals (text & stickers).
+
 ## Looks (presets)
 
 "Start from a look" shows one card per `PRESETS` entry: a rendered thumbnail, `desc`, and the price change (`extrasTotal()` of the look's full build).

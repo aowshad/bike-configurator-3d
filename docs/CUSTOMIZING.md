@@ -20,6 +20,9 @@ Existing share links keep working only if you **append** new items, because stat
 
 ## Add a section
 Push to `SECTIONS`: `{ id, name, focus:'<VIEWS key>', controls:[…] }`. Add a camera view to `VIEWS` if you need one.
+Give it an icon in `SECTION_ICONS` (section id → inner SVG markup). Draw on a 24px grid with lines only: main.js wraps it in an
+`<svg>` with `stroke-width 1.6`, round caps and joins, and `currentColor`. A section without an icon gets a plain tile.
+Hovering its row highlights the parts whose slot maps to it in `SLOT_SECTION`.
 
 ## Text spots
 - Change a spot's default text, length or camera view in `TEXT_SPOTS`.

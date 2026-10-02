@@ -182,6 +182,25 @@ export const DEFAULT = { frame:0, finish:0, rear:0, accent:0, fork:0, uppers:0, 
   saddleShape:0, cover:0, rimDepth:0, spokeShape:0, nipples:0, pedalStyle:0 };
 for (const s of TEXT_SPOTS) Object.assign(DEFAULT, { [s.key]:'', [s.id+'Case']:0, [s.id+'Font']:0, [s.id+'Col']:0, [s.id+'Fx']:0 });
 
+/* ============ section icons ============ */
+// section id → inner SVG markup on a 24px grid. main.js wraps it in
+// <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">.
+// Line art only (no fills), so the set reads as one family. A section without an entry gets a plain tile.
+export const SECTION_ICONS = {
+  frame:    '<path d="M8.6 17.2 6.9 6.4M5.6 6.4h2.8M7.4 8.1l9.4-1.4M16.2 4.6l1.4 5.6M17.2 8.6l-7.3 7.6"/><circle cx="9" cy="17.4" r="1.7"/>',
+  rear:     '<path d="M6.9 16.6 12.6 7.8M7.2 17.6h7.6l-2.2-9.8"/><circle cx="5.4" cy="17.4" r="2"/><circle cx="12.6" cy="7.8" r="1.4"/>',
+  accent:   '<path d="M12 3.6 19.3 7.8v8.4L12 20.4 4.7 16.2V7.8Z"/><circle cx="12" cy="12" r="3.1"/>',
+  fork:     '<path d="M6.5 4h11M6.5 7.6h11M9.2 4v6.4M14.8 4v6.4M9.4 18.6h5.2"/><rect x="8" y="10.4" width="2.4" height="8.4" rx="1.2"/><rect x="13.6" y="10.4" width="2.4" height="8.4" rx="1.2"/>',
+  shock:    '<circle cx="12" cy="4" r="1.6"/><circle cx="12" cy="20" r="1.6"/><path d="M12 5.6v12.8M8.4 7.6l7.2 1.4M8.4 10.6l7.2 1.4M8.4 13.6l7.2 1.4M8.6 16.8h6.8"/>',
+  wheels:   '<circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="1.9"/><path d="M12 3.4v6.7M12 13.9v6.7M3.4 12h6.7M13.9 12h6.7M5.9 5.9l4.8 4.8M13.3 13.3l4.8 4.8M18.1 5.9l-4.8 4.8M10.7 13.3l-4.8 4.8"/>',
+  tires:    '<rect x="6.8" y="2.8" width="10.4" height="18.4" rx="5.2"/><path d="M9.4 7.6 12 9.4l2.6-1.8M9.4 11.2 12 13l2.6-1.8M9.4 14.8 12 16.6l2.6-1.8"/>',
+  cockpit:  '<path d="M2.8 10.2h3.1c1.7 0 2.6 2.3 4.3 2.3h3.6c1.7 0 2.6-2.3 4.3-2.3h3.1M2.8 8.6v3.2M21.2 8.6v3.2M12 12.5v5M9.8 17.5h4.4"/>',
+  saddle:   '<path d="M3.6 9.4c3.2-1.3 7-1.6 10.6-.8 2.4.5 4.3.9 6.2.5-.5 1.7-2.2 2.8-4.6 2.8h-5.6c-2.8 0-5-.9-6.6-2.5Z"/><path d="m9.8 11.9 2.2 2.4 2.2-2.4M12 14.3v6.3"/>',
+  drive:    '<circle cx="12" cy="12" r="7"/><path d="M19.00 12.00 20.70 12.00M18.31 15.04 19.84 15.77M16.36 17.47 17.42 18.80M13.56 18.82 13.94 20.48M10.44 18.82 10.06 20.48M7.64 17.47 6.58 18.80M5.69 15.04 4.16 15.77M5.00 12.00 3.30 12.00M5.69 8.96 4.16 8.23M7.64 6.53 6.58 5.20M10.44 5.18 10.06 3.52M13.56 5.18 13.94 3.52M16.36 6.53 17.42 5.20M18.31 8.96 19.84 8.23"/><circle cx="12" cy="12" r="1.8"/><path d="M13.3 13.3l3.4 3.4"/>',
+  pedals:   '<rect x="6" y="6.5" width="13" height="11" rx="2.6"/><path d="M2.6 12H6M12.5 6.5v11M9 9.6h.01M16 9.6h.01M9 14.4h.01M16 14.4h.01"/>',
+  stickers: '<path d="M3.8 18.2 8.4 5.8l4.6 12.4M5.5 13.9h5.8"/><circle cx="16.8" cy="15.1" r="3.1"/><path d="M19.9 11.6v6.6"/>',
+};
+
 /* ============ camera views (meters, bike faces +X, drive side +Z) ============ */
 export const VIEWS = {
   overview:{ cam:[1.5,1.08,3.0], tgt:[0,.52,0] },

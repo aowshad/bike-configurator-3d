@@ -67,7 +67,9 @@ Keep it that way unless the roadmap item says otherwise.
    three's default `sheenColor` is black, which makes `sheen` invisible.
 7. **Never render to a `WebGLRenderTarget` for previews.** three renders targets with linear output and no tone mapping, which compiles
    a second set of shader programs (a stall). Look thumbnails render into a scissored corner of the main canvas instead (ARCHITECTURE.md, "Looks").
-8. The Blender materials are procedural and do not export. Detail comes from geometry plus the small generated normal maps (`flake`, `grain`). Baked textures are on the roadmap.
+8. **Clamp animation progress at 0 as well as 1.** rAF's `now` can be earlier than the `performance.now()` an animation started at.
+   A negative step overshoots backwards, e.g. iridescence .0001 → −.005, which drops the define and recompiles (an intermittent stall).
+9. The Blender materials are procedural and do not export. Detail comes from geometry plus the small generated normal maps (`flake`, `grain`). Baked textures are on the roadmap.
 
 ## Verify every change
 

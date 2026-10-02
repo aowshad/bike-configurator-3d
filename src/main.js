@@ -5,7 +5,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 import { BASE_PRICE, OIL, PAINT, ANO, SECTIONS, PRESETS, DEFAULT, VIEWS, slotFor, SLOT_SECTION, SLOT_LABEL, FINISH,
-  FONTS, TEXT_SPOTS, TEXT_PRICE, TEXT_PRICE_MAX, TEXT_CHARS, BAR_RISE, BAR_WIDTH, SADDLE_SHAPES, RIM_DEPTHS, SPOKE_SHAPES, PEDAL_STYLES } from './config.js';
+  SECTION_ICONS, FONTS, TEXT_SPOTS, TEXT_PRICE, TEXT_PRICE_MAX, TEXT_CHARS, BAR_RISE, BAR_WIDTH, SADDLE_SHAPES, RIM_DEPTHS, SPOKE_SHAPES, PEDAL_STYLES } from './config.js';
 import { patchFrame, patchTires, patchGrips, patchSaddle, makeTires, Deformer, pieces, GRIP_TEX, SADDLE_TEX, SADDLE_PARAMS } from './looks.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -337,7 +337,7 @@ loader.load('assets/models/bike.glb', gltf => {
   document.getElementById('loadTxt').textContent = 'Preparing materials…';
   // warm every look's deformation targets now, so rendering its thumbnail never computes geometry mid-frame
   for (const s of [state, ...PRESETS.map(p => ({ ...DEFAULT, ...p.c }))]) { const dp = deformParams(s); for (const k in deform) deform[k].warm(dp[k]); }
-  const ready = () => { applyState(true); document.getElementById('loader').classList.add('done'); flyTo('overview'); modelReady = true; queueThumbs(); };
+  const ready = () => { sectionMats(); applyState(true); document.getElementById('loader').classList.add('done'); flyTo('overview'); modelReady = true; queueThumbs(); };
   (renderer.compileAsync ? renderer.compileAsync(scene, camera) : Promise.resolve()).then(ready, ready);
 }, e => {
   if (!e.total) return;
@@ -571,11 +571,13 @@ function resize(){
 new ResizeObserver(resize).observe(stage); resize();
 renderer.setAnimationLoop(now => {
   if (tween) {
-    const t = Math.min(1, (now - tween.start) / tween.dur), k = easeInOut(t);
+    const t = Math.min(1, Math.max(0, (now - tween.start) / tween.dur)), k = easeInOut(t);
     camera.position.lerpVectors(tween.from.c, tween.to.c, k); controls.target.lerpVectors(tween.from.t, tween.to.t, k);
     if (t >= 1) tween = null;
   }
-  for (const [key, a] of anims) { const t = Math.min(1, (now - a.start) / a.dur); if (t >= 1) anims.delete(key); a.step(1 - Math.pow(1 - t, 3)); }
+  // clamp at 0 too: rAF's `now` can be earlier than the performance.now() an animation started at, and a negative
+  // step would overshoot (iridescence .0001 → -.005 drops the define and recompiles the shader)
+  for (const [key, a] of anims) { const t = Math.min(1, Math.max(0, (now - a.start) / a.dur)); if (t >= 1) anims.delete(key); a.step(1 - Math.pow(1 - t, 3)); }
   for (const d of Object.values(deform)) d.step(now);
   controls.update();
   thumbStep(now);   // draws into a corner of the canvas; the full render below paints over it in the same frame
@@ -615,6 +617,8 @@ function thumbStep(now){
   lastThumb = now;
   const job = thumbQueue.shift(), i = job.i, theme = themeName(), saved = { ...state };
   if (job.prep) { prepThumbText(i); return; }
+  const lit = Object.values(hlMats || {}).flat().filter(m => m.emissiveIntensity > 0).map(m => [m, m.emissiveIntensity]);
+  lit.forEach(([m]) => m.emissiveIntensity = 0);   // a hovered part's glow must not end up in a thumbnail
   thumbMode = true; Object.assign(state, DEFAULT, PRESETS[i].c); applyState(true, false);
   const pr = renderer.getPixelRatio(), size = renderer.getSize(new THREE.Vector2()), clear = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha();
   renderer.shadowMap.autoUpdate = false;   // keep this frame's shadow map: saves a full pass, invisible at thumbnail size
@@ -627,6 +631,7 @@ function thumbStep(now){
   renderer.setScissorTest(false); renderer.setViewport(0, 0, size.x, size.y); renderer.setClearColor(clear, alpha);
   renderer.shadowMap.autoUpdate = true;
   thumbMode = false; Object.assign(state, saved); applyState(true, false);
+  lit.forEach(([m, v]) => m.emissiveIntensity = v);
   // encode off the main thread, then hand over a data URL
   thumbCanvas.toBlob(b => { const r = new FileReader(); r.onload = () => { thumbCache.set(theme + '|' + i, r.result); if (theme === themeName()) setThumb(i, r.result); }; r.readAsDataURL(b); }, 'image/png');
 }
@@ -701,7 +706,7 @@ function control(c){
 document.getElementById('sections').innerHTML = SECTIONS.map(s => `
   <div class="sec" id="sec-${s.id}">
     <button class="shead" aria-expanded="false" aria-controls="body-${s.id}" data-sec="${s.id}">
-      <span class="sdot" id="dot-${s.id}"></span><span class="sname">${s.name}</span><span class="sval" id="val-${s.id}"></span>${chev}
+      <span class="sicon">${SECTION_ICONS[s.id] ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SECTION_ICONS[s.id]}</svg>` : ''}<i class="sdot" id="dot-${s.id}"></i></span><span class="sname">${s.name}</span><span class="sval" id="val-${s.id}"></span>${chev}
     </button>
     <div class="sbody" id="body-${s.id}"><div><div class="sinner">${s.controls.map(control).join('')}</div></div></div>
   </div>`).join('');
@@ -719,6 +724,50 @@ function extrasTotal(s = state){
   }
   return sum;
 }
+/* hover or focus a section row → its parts glow softly on the bike */
+// Every highlightable material gets a fixed emissive color at load; only emissiveIntensity animates (a uniform: no recompile).
+// pulse: rise to `peak` over `in`, settle to `hold` over `out` while the row stays hovered, fade out over `out`
+const HL = { color: '#ffffff', peak: .2, hold: .09, in: 180, out: 260 };
+let hlMats = null, hlSec = null;
+function sectionMats(){
+  if (hlMats) return hlMats;
+  hlMats = {};
+  for (const [slot, sec] of Object.entries(SLOT_SECTION)) if (M[slot]) (hlMats[sec] ??= []).push(M[slot]);
+  hlMats.accent.push(M.nipples);
+  hlMats.stickers = decals.map(d => d.material);
+  for (const m of Object.values(hlMats).flat()) { m.emissive.set(HL.color); m.emissiveIntensity = 0; m.userData.hl = {}; }
+  return hlMats;
+}
+function highlight(id){
+  if (id === hlSec || !decals.length) return; hlSec = id;
+  for (const [sec, mats] of Object.entries(sectionMats())) for (const m of mats) {
+    const from = m.emissiveIntensity, key = m.userData.hl;
+    if (sec !== id) {
+      if (from > 0 || anims.has(key)) run(key, k => { m.emissiveIntensity = from * (1 - k); }, false, HL.out);
+      continue;
+    }
+    run(key, k => {
+      m.emissiveIntensity = from + (HL.peak - from) * k;
+      if (k >= 1 && hlSec === id) run(key, j => { m.emissiveIntensity = HL.peak + (HL.hold - HL.peak) * j; }, false, HL.out);
+    }, false, HL.in);
+  }
+}
+// the last pointer decides hover vs touch (media queries misreport on hybrid and emulated devices)
+let lastPointer = 'mouse', hlOnce;
+addEventListener('pointerdown', e => { lastPointer = e.pointerType; }, true);
+for (const h of document.querySelectorAll('.shead')) {
+  const id = h.dataset.sec;
+  h.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') highlight(id); });
+  h.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && !h.matches(':focus-visible')) highlight(null); });
+  h.addEventListener('focus', () => { if (h.matches(':focus-visible')) highlight(id); });
+  h.addEventListener('blur', () => { if (hlSec === id && !h.matches(':hover')) highlight(null); });
+}
+// touch: play the glow once when a section opens
+function playHighlight(id){
+  if (lastPointer !== 'touch' && lastPointer !== 'pen') return;
+  clearTimeout(hlOnce); highlight(id); hlOnce = setTimeout(() => highlight(null), HL.in + 520);
+}
+
 const check = '<svg class="chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
 document.getElementById('presets').innerHTML = '<i class="lookSel" aria-hidden="true"></i>' + PRESETS.map((p,i) => {
   const ex = extrasTotal({ ...DEFAULT, ...p.c });
@@ -857,6 +906,7 @@ function openSection(id, fromModel=false, view, scrollTo){
   });
   const el = document.getElementById('sec-' + id);
   if (el.classList.contains('open')) {
+    playHighlight(id);
     flyTo(view || SECTIONS.find(s => s.id === id).focus);
     setTimeout(() => (scrollTo ? document.getElementById(scrollTo) : el).scrollIntoView({ block:'nearest', behavior: reduceMotion ? 'auto' : 'smooth' }), 280);
   }
