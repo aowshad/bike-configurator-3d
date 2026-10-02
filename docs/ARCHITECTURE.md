@@ -11,6 +11,7 @@ index.html ──loads──▶ src/main.js ──imports──▶ src/config.js
                          │     traverse meshes → slotFor(node, material) → shared material M[slot]
                          │     decals → white-alpha canvas textures, tinted by material color
                          │     every decal also gets a TextDecal (its own canvas for custom text)
+                         │     generated tires, Deformers (cached vertex deformation), style shaders (looks.js)
                          │     adds 2 generated "semi-slick" torus tires (hidden by default)
                          ├─ renderer.compileAsync() → hide loader → flyTo('overview')
                          └─ UI built from SECTIONS → clicks update `state` → applyState() → writeHash()
@@ -37,8 +38,14 @@ Only values that differ from `DEFAULT` go into the URL hash. Strings are sanitiz
 | `font` | typeface picker, each option previews itself; `opts: [label, cssFamily, weight]` | none |
 | `effect` | segmented buttons with a small preview; `opts: [label, price]` | `opts[i][1]` |
 | `spots` | one row per text spot with an inline editor; `spots: TEXT_SPOTS` | `TEXT_PRICE` per custom spot, capped at `TEXT_PRICE_MAX` |
+| `style` | option cards with a tiny preview chip; `opts: [title, subtitle, price, cssPreview]` | `opts[i][2]` |
+| `pattern` | same as `style`, for surface textures (grip, saddle cover) | `opts[i][2]` |
+| `deform` | segmented buttons for shape options; `opts: [label, price, value]` (the value drives the deformation) | `opts[i][1]` |
+| `more` | "More options" disclosure; `controls: [...]`, hidden when none of its controls apply | none |
 
-Any control can carry `when: [key, value]`: it is only shown while `state[key] === value`.
+Card previews may use `--c1`/`--c2`/`--c3` (the part's current colors) and `--ac` (anodized color); `updateUI()` fills them in.
+
+Any control can carry `when: [key, [values]]`: it is only shown while `state[key]` is one of the values.
 In a `color` control, a `null` hex is a "match" option; `opts[i][3]` names the slot it borrows from (`frame`, `accent`).
 
 ## Slots → materials
@@ -64,6 +71,41 @@ On load every decal mesh gets a `TextDecal`:
 - **Drawing**: white on transparent, auto-fit to the spot (`fit: [width, height]`), centered on its measured glyph box.
   Effects (outline, shadow, italic) are drawn on the canvas. Fonts are loaded with `document.fonts.load()`; a spot redraws once its font arrives.
 - **Swapping** between the logo and text only changes `material.map` between two sRGB textures: same shader, no recompile.
+
+## Style options (`src/looks.js`)
+
+The GLB has no swappable parts, so every style is generated in code. Three techniques:
+
+| Technique | Used for | How |
+|---|---|---|
+| Shader patch (`onBeforeCompile`) | frame paint styles, tire sidewall, grip pattern, saddle cover | world- or rest-space math, no UVs. Each patched material has a fixed `customProgramCacheKey` |
+| Generated normal/height maps | grip patterns, saddle covers | drawn once on a canvas into a tiling `DataTexture` (RGB normal, A height), cached in `GRIP_TEX` / `SADDLE_TEX` |
+| Cached vertex deformation (`Deformer`) | bar rise/width, saddle shape, rim depth, bladed spokes, pedals | positions are dequantized to float once; each option's target positions are computed once, cached, and eased over 260 ms (`--slow`) |
+| Procedural meshes | semi-slick, slick street, mud spike tires | tori, plus an `InstancedMesh` of tapered knobs for mud spike |
+
+**No recompiles.** Styles switch with uniforms, never defines. Every variant (all tires, collars, pedals, the guide) is made visible
+for `renderer.compileAsync()` before the loader hides, and the frame's flake normal map stays bound (`normalScale` 0 when not metallic).
+Measured: 34 option changes, shader programs stay at 17, worst frame 16.8 ms (Apple M4, Chrome).
+
+**Cross-fades.** A style uniform set has slots A, B and T. `fadeStyle()` puts the old option in A, the new one in B, and eases T 0 → 1,
+so patterns dissolve into each other instead of popping. Colors and numbers go through the shared `run()` animation list.
+
+**Rest space.** Deformed meshes get an `aRest` attribute (their undeformed world positions), so grip and saddle patterns stay glued to
+the surface while it moves. Frame and tire shaders use live world position (those meshes never deform).
+
+Details per style:
+- **Frame paint**: fade runs along the head tube → rear axle line; split is a plane through the frame center at `splitAngle`; camo is two
+  thresholded fbm layers (third tone = dark mix of both colors); splatter is 2D Worley splats in the side-view plane with noisy rims, so
+  splats look sprayed on rather than solid; carbon weave is a 2×2 twill, triplanar with sharp blend zones, fading to its average when the
+  tows get sub-pixel. All of them sit under the existing finish (gloss, satin, matte, metallic) because they only replace the base color.
+- **Sidewall**: radial distance from the hub picks the band (tan wall 316–341 mm, stripe 320–323 mm).
+- **Grips**: cylindrical projection around the bar axis, with the atan seam handled by picking the branch with the smaller derivative.
+- **Bar**: the bar stretches with a smooth falloff between the stem clamp and the bends; grips, levers, bar ends and collars move rigidly
+  with the bar ends (the grip rubber is never stretched); brake lines bend along near the bar.
+- **Lock-on collars**: the collar primitive is split by distance from the bar center into inner and outer rings at load time.
+- **Wheels**: deep rims scale the rim cross-section toward the hub; nipples slide along their spoke by the same depth; bladed spokes
+  flatten each spoke's cross-section (wider along the axle, thinner in the direction of travel). Nipple pieces are found by connectivity
+  (`pieces()`), which also gives each nipple its own vertex color for "Rainbow".
 
 ## Coordinates
 

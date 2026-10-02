@@ -28,6 +28,15 @@ Push to `SECTIONS`: `{ id, name, focus:'<VIEWS key>', controls:[…] }`. Add a c
 - Add a sticker color: append to `STICKER_COLORS`. Use `[name, null, 0, 'frame' | 'accent']` for a "match" color.
 - A new decal mesh in the GLB: add its node name to a spot's `nodes` regex. If its text reads mirrored on the bike, also add it to `flip`.
 
+## Style options
+- Paint, tread, sidewall, grip and saddle cover options live in `PAINT_STYLES`, `TREADS`, `SIDEWALLS`, `GRIP_PATTERNS` and `SADDLE_COVERS`.
+  Each is `[title, subtitle, price, cssPreview]`. The index is what the shaders in `looks.js` switch on, so **append** new entries.
+- Shape options (`BAR_RISE`, `BAR_WIDTH`, `SADDLE_SHAPES`, `RIM_DEPTHS`, `SPOKE_SHAPES`, `PEDAL_STYLES`) are `[label, price, value]`.
+  Changing a value (for example a bar width in meters per side) needs no code change.
+- A new paint style: add a branch to `lk_paint()` in `looks.js` (it receives the base color and the world position) and an entry in `PAINT_STYLES`.
+- A new grip or saddle texture: add a `heightTexture()` call to `GRIP_TEX` / `SADDLE_TEX` (draw white = raised) and an option entry.
+- Never switch a style with a shader define or a new texture slot. Use the existing uniforms so the page never recompiles.
+
 ## Add a preset
 Push `{ name, c:{ key:index, … } }` to `PRESETS`. Keys you leave out fall back to `DEFAULT`.
 

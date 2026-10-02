@@ -26,6 +26,7 @@ src/styles.css             all UI styles, design tokens, light/dark theme
 src/config.js              ALL product data: options, prices, presets, camera views,
                            mesh→slot mapping, paint finishes  ← most edits happen here
 src/main.js                three.js scene, materials, model loading, applying state, UI rendering
+src/looks.js               generated styles: shader patches, normal maps, procedural tires, vertex Deformer
 assets/models/bike.glb     web-ready model (7.2 MB, 1.36M tris, meshopt compressed)
 legacy/v1-trail26/         first prototype (old free model), kept for reference
 tools/model-pipeline/      Blender export + optimize scripts that produce bike.glb
@@ -60,7 +61,10 @@ Keep it that way unless the roadmap item says otherwise.
 5. Decal PNGs are black on transparent. `whiteAlpha()` turns them white so a material color can tint them.
    Custom text uses its own canvas per decal mesh (`TextDecal`), mapped onto the mesh's UV rectangle with texture offset/repeat.
    `document.fonts.check()` can say true before a Google font has loaded; track readiness from `document.fonts.load()` instead.
-6. The Blender materials are procedural and do not export. Detail comes from geometry plus the small generated normal maps (`flake`, `grain`). Baked textures are on the roadmap.
+6. **Style options** switch with uniforms only (see docs/ARCHITECTURE.md, "Style options"). Every hidden variant is made visible for
+   `compileAsync()` at load. `sheen` and other optional features must stay > 0, or three drops the define and recompiles.
+   three's default `sheenColor` is black, which makes `sheen` invisible.
+7. The Blender materials are procedural and do not export. Detail comes from geometry plus the small generated normal maps (`flake`, `grain`). Baked textures are on the roadmap.
 
 ## Verify every change
 

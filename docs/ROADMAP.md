@@ -9,10 +9,29 @@ Work top to bottom, one item per session or commit. Tick items off here when the
 - [ ] Add undo/redo for option changes (Ctrl/Cmd+Z).
 - [ ] Add a hover highlight: a subtle outline on the part under the cursor (throttled raycast, or three-mesh-bvh).
 
+## Done: text & styles (docs/prompts/02-text-and-styles.md)
+- [x] Custom text on all 8 logo spots (down tube, frame, tires, fork, shock, cranks, brakes, drivetrain): 5 fonts, sticker colors
+      incl. match anodized / match frame, outline / shadow / italic. Tire text follows the sidewall. Click a logo to edit it.
+- [x] Frame paint styles: solid, fade, split, camo, splatter, carbon weave (with second color, pattern scale, split angle, fade length).
+- [x] Tire tread: knobby DH, semi-slick, slick street, mud spike. Sidewall: all black, tan wall, colored stripe.
+- [x] Handlebar rise (low / high / flat) and width (760 / 780 / 800 mm); grip pattern (waffle / diamond / ribbed / smooth); lock-on collars.
+- [x] Saddle shape (standard / slim race / plush) and cover (smooth / perforated / stitched / suede).
+- [x] Rim depth (standard / deep), bladed spokes, rainbow nipples, clip-in-look pedals.
+- [x] Presets: Team Edition, Camo Raw, Street Slick.
+
+### Dropped or changed (and why)
+- **Chain hollow-pin look**: not shipped. The pin heads are about 3 mm across on a 123k-vertex chain, so a normal-mapped hole is
+  smaller than a pixel in every camera view, and up close it reads as a painted dot, not a hole. Needs real geometry (a chain GLB part).
+- **Grip pattern uses a cylindrical projection, not triplanar.** Triplanar on a cylinder blends two projections at 45° around the grip,
+  which smears the waffle and diamond patterns into a visible seam. The grips are true cylinders around the bar axis, so a cylindrical
+  projection maps the tile exactly.
+- **Custom tire text is hidden on the generated tires** (semi-slick, slick street, mud spike): the sidewall decal meshes are shaped for
+  the GLB's knobby tire and would float off the thinner tori. The tan wall and stripe shaders work on all four treads.
+- **Spoke "silver / black" stays a color**, and "bladed" is a separate shape option, so bladed spokes come in both colors.
+
 ## Next: realism
-- [ ] Bake the procedural Blender detail into normal and roughness maps: grip waffle, tire rubber, saddle grain, frame flake.
-- [ ] Add a tan-wall tire option (needs a sidewall mask texture).
-- [ ] Add a raw carbon finish with a weave texture on the frame UVs.
+- [ ] Bake the procedural Blender detail into normal and roughness maps: tire rubber, frame flake (grip and saddle patterns are now generated).
+- [ ] Curved sidewall text on the generated tires (needs their own decal geometry or a sidewall-projected text shader).
 - [ ] Add an optional turntable shot: a pre-rendered hero image for social and OG previews.
 
 ## Then: real part swaps

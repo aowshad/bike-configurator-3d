@@ -5,7 +5,8 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 import { BASE_PRICE, OIL, PAINT, ANO, SECTIONS, PRESETS, DEFAULT, VIEWS, slotFor, SLOT_SECTION, SLOT_LABEL, FINISH,
-  FONTS, TEXT_SPOTS, TEXT_PRICE, TEXT_PRICE_MAX, TEXT_CHARS } from './config.js';
+  FONTS, TEXT_SPOTS, TEXT_PRICE, TEXT_PRICE_MAX, TEXT_CHARS, BAR_RISE, BAR_WIDTH, SADDLE_SHAPES, RIM_DEPTHS, SPOKE_SHAPES, PEDAL_STYLES } from './config.js';
+import { patchFrame, patchTires, patchGrips, patchSaddle, makeTires, Deformer, pieces, GRIP_TEX, SADDLE_TEX, SADDLE_PARAMS } from './looks.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const state = { ...DEFAULT };
@@ -80,8 +81,8 @@ const flake = noiseNormal(256, 1.6); flake.repeat.set(40, 40);
 const grain = noiseNormal(256, .7); grain.repeat.set(10, 10);
 
 const M = {
-  frame:   phys({ color:'#5B6067', roughness:.3, metalness:.15, clearcoat:1, clearcoatRoughness:.05 }),
-  rear:    phys({ color:'#5B6067', roughness:.3, metalness:.15, clearcoat:1, clearcoatRoughness:.05 }),
+  frame:   phys({ color:'#5B6067', roughness:.3, metalness:.15, clearcoat:1, clearcoatRoughness:.05, normalMap:flake, normalScale:new THREE.Vector2(0,0) }),
+  rear:    phys({ color:'#5B6067', roughness:.3, metalness:.15, clearcoat:1, clearcoatRoughness:.05, normalMap:flake, normalScale:new THREE.Vector2(0,0) }),
   accent:  phys({ color:'#2457E6', roughness:.28, metalness:.9, iridescence:.0001, iridescenceIOR:1.8, iridescenceThicknessRange:[250,900] }),
   forkLow: phys({ color:'#18181A', roughness:.32, metalness:.1, clearcoat:.9, clearcoatRoughness:.08 }),
   forkUp:  phys({ color:'#121214', roughness:.12, metalness:.8, clearcoat:1, clearcoatRoughness:.03 }),
@@ -105,22 +106,45 @@ const M = {
   black:   phys({ color:'#161618', roughness:.32, metalness:.35 }),
   blackMetal: phys({ color:'#1A1A1D', roughness:.3, metalness:.85 }),
 };
-/* smooth material transitions */
+M.saddle.sheenColor.set('#9a9a9a');   // three's default sheen color is black, which hides the sheen
+M.nipples = M.accent.clone(); M.nipples.vertexColors = true;   // per-nipple colors for "Rainbow"
+// style shaders: compiled once with the scene, switched with uniforms
+const U = { frame: patchFrame([M.frame, M.rear]), tires: patchTires(M.tires), grips: patchGrips(M.grips, new THREE.Vector2(.267, 1.059)), saddle: patchSaddle(M.saddle) };
+/* smooth transitions: materials, uniforms and style cross-fades share one animation list */
 const anims = new Map();
+function run(key, step, instant, dur = 340){
+  if (instant || reduceMotion) { anims.delete(key); step(1); return; }
+  anims.set(key, { step, start: performance.now(), dur });
+}
 function setMat(mat, target, instant){
   const from = { color: mat.color.clone() }; for (const k in target) if (k !== 'color') from[k] = mat[k];
   const to = { ...target, color: new THREE.Color(target.color ?? from.color) };
-  if (instant || reduceMotion) { lerpMat(mat, from, to, 1); return; }
-  anims.set(mat, { from, to, start: performance.now(), dur: 340 });
+  if (Object.keys(to).every(k => k === 'color' ? mat.color.equals(to.color) : mat[k] === to[k])) return;
+  run(mat, t => lerpMat(mat, from, to, t), instant);
 }
 function lerpMat(mat, from, to, t){
   mat.color.copy(from.color).lerp(to.color, t);
   for (const k in to) if (k !== 'color' && typeof to[k] === 'number') mat[k] = from[k] + (to[k] - from[k]) * t;
 }
+// tween a {value} uniform (number or Color)
+function tweenU(u, to, instant){
+  if (u.value.isColor) { const t = new THREE.Color(to); if (u.value.equals(t)) return; const f = u.value.clone(); run(u, k => u.value.copy(f).lerp(t, k), instant); }
+  else { if (u.value === to) return; const f = u.value; run(u, k => { u.value = f + (to - f) * k; }, instant); }
+}
+// cross-fade a style: slot A shows the old option, slot B the new one, T eases 0 → 1
+function fadeStyle(T, setSlot, idx, instant){
+  if (T.idx === idx) return;
+  const prev = T.idx; T.idx = idx;
+  if (prev === undefined || instant || reduceMotion) { anims.delete(T); setSlot('A', idx); setSlot('B', idx); T.a = idx; T.value = 0; return; }
+  const visible = anims.has(T) && T.value > .5 ? prev : T.a;
+  setSlot('A', visible); T.a = visible; setSlot('B', idx); T.value = 0;
+  run(T, k => { T.value = k; if (k >= 1) { setSlot('A', idx); T.a = idx; T.value = 0; } }, false, 300);
+}
 
 /* ============ model ============ */
-const nodes = {}; const decals = []; const pickables = [];
-let slickTires = [], knobbyTires = [];
+const nodes = {}; const decals = []; const pickables = []; const meshes = {};
+let treads = [[]], collars = { inner: [], outer: [] }, deform = {};
+const HUBS = [[.63, .355], [-.625, .365]];   // front, rear wheel centers (world x, y)
 const SEAT_AXIS = new THREE.Vector3(-.546, .838, 0).normalize();
 
 function whiteAlpha(img){
@@ -271,11 +295,6 @@ class TextDecal {
 const spotMeshes = Object.fromEntries(TEXT_SPOTS.map(s => [s.id, []]));
 const spotOf = node => TEXT_SPOTS.find(s => s.nodes.test(node));
 
-function makeSlick(cx, cy){
-  const geo = new THREE.TorusGeometry(.333, .031, 40, 160);
-  const m = new THREE.Mesh(geo, M.tires); m.position.set(cx, cy, 0); m.scale.set(1, 1, 1.22);
-  m.castShadow = m.receiveShadow = true; m.visible = false; m.userData.slot = 'tires'; return m;
-}
 
 const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
 loader.load('assets/models/bike.glb', gltf => {
@@ -297,16 +316,22 @@ loader.load('assets/models/bike.glb', gltf => {
     } else {
       const slot = slotFor(nodeName, o.material.name);
       o.material = M[slot] || M.black; o.userData.slot = slot;
-      if (slot === 'tires') knobbyTires.push(o);
+      if (slot === 'tires') treads[0].push(o);
     }
+    meshes[o.name] = o;
     pickables.push(o);
   });
   scene.add(bike);
   FONTS.forEach(f => loadFont(f).then(ok => { if (ok) drawTexts(); }));
-  for (const s of [makeSlick(.63, .355), makeSlick(-.625, .365)]) { scene.add(s); slickTires.push(s); pickables.push(s); }
-  applyState(true);
+  // generated treads (1 semi-slick, 2 slick street, 3 mud spike)
+  makeTires(M.tires, HUBS).forEach((list, i) => { if (i) treads[i] = list; for (const m of list) { scene.add(m); pickables.push(m); } });
+  setupDeformers();
+  if (meshes.Spoke_nipples) meshes.Spoke_nipples.material = M.nipples;
+  // compile every variant up front (hidden parts included), so no option ever stalls on a shader compile
+  const variants = [...treads.flat(), ...collars.inner, ...collars.outer, nodes.Guard, nodes.Pedals].filter(Boolean);
+  variants.forEach(o => o.visible = true);
   document.getElementById('loadTxt').textContent = 'Preparing materials…';
-  const ready = () => { document.getElementById('loader').classList.add('done'); flyTo('overview'); };
+  const ready = () => { applyState(true); document.getElementById('loader').classList.add('done'); flyTo('overview'); };
   (renderer.compileAsync ? renderer.compileAsync(scene, camera) : Promise.resolve()).then(ready, ready);
 }, e => {
   if (!e.total) return;
@@ -316,42 +341,188 @@ loader.load('assets/models/bike.glb', gltf => {
 }, err => { document.getElementById('loadTxt').textContent = 'Could not load the 3D model.'; console.error(err); });
 camera.position.set(2.6, 1.6, 4.6); controls.target.set(0, .52, 0);
 
+/* ============ deformations (see looks.js) ============ */
+const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+function setupDeformers(){
+  const pick = names => names.map(n => meshes[n]).filter(Boolean);
+  // cockpit: the bar stretches between the stem clamp and the bends; grips, levers, bar ends and
+  // collars move rigidly with the bar ends; brake lines bend along near the bar
+  const cockpit = pick(['Handlebars', 'Plane034', 'Plane034_1', 'BarEnds', 'Plane011', 'Plane011_1', 'Lines',
+    'GuideLeverDecal', 'GuideLeverDecal001', 'GuideLeverDecal002', 'GuideLeverDecal003', 'GuideLeverDecal004']);
+  for (const m of cockpit) m.userData.rigid = !/^(Handlebars|Lines)$/.test(m.name);
+  deform.cockpit = new Deformer(cockpit, (p, { rise, dw }, it) => {
+    const lines = it.mesh.name === 'Lines';
+    for (let i = 0; i < p.length; i += 3) {
+      const y = p[i+1], z = p[i+2], az = Math.abs(z);
+      let w = it.data.rigid ? 1 : smooth(.04, .15, az);
+      if (lines) w *= smooth(.93, 1.0, y);
+      p[i+1] += rise * w; p[i+2] += Math.sign(z) * dw * w;
+    }
+    return p;
+  });
+  deform.cockpit.restAttribute(m => m.name === 'Plane034_1');
+  // lock-on collars: split the collar primitive into its inner and outer rings (they share the deformed positions)
+  const col = meshes.Plane034;
+  if (col) {
+    const rest = deform.cockpit.items.find(it => it.mesh === col).rest, idx = col.geometry.index.array, sets = { inner: [], outer: [], keep: [] };
+    for (let i = 0; i < idx.length; i += 3) {
+      const z = Math.abs(rest[idx[i]*3+2] + rest[idx[i+1]*3+2] + rest[idx[i+2]*3+2]) / 3;
+      (z > .372 ? sets.outer : z < .262 ? sets.inner : sets.keep).push(idx[i], idx[i+1], idx[i+2]);
+    }
+    for (const k of ['inner', 'outer']) {
+      const g = new THREE.BufferGeometry(); for (const [n, a] of Object.entries(col.geometry.attributes)) g.setAttribute(n, a);
+      g.setIndex(sets[k]); g.boundingSphere = col.geometry.boundingSphere;
+      const m = new THREE.Mesh(g, col.material); m.castShadow = m.receiveShadow = true; Object.assign(m.userData, col.userData);
+      col.parent.add(m); m.position.copy(col.position); m.quaternion.copy(col.quaternion); m.scale.copy(col.scale);
+      collars[k].push(m); pickables.push(m);
+    }
+    col.geometry.setIndex(sets.keep);
+  }
+  // saddle: narrower and flatter, or thicker padding; falloffs keep the nose and rails in place
+  const seat = pick(['Cylinder002', 'Cylinder002_1']);
+  deform.saddle = new Deformer(seat, (p, shape) => {
+    for (let i = 0; i < p.length; i += 3) {
+      const x = p[i], y = p[i+1], z = p[i+2], rear = smooth(-.22, -.42, x), y0 = .852;
+      if (shape === 1) { p[i+2] = z * (1 - .05 - .13 * rear); p[i+1] = y0 + (y - y0) * (.84 - .04 * rear); }
+      if (shape === 2) { const crown = Math.max(0, 1 - (z / .075) ** 2) * smooth(-.18, -.27, x);
+        p[i+2] = z * (1 + .05 * rear); p[i+1] = y0 + (y - y0) * (1.12 + .14 * crown); }
+    }
+    return p;
+  });
+  deform.saddle.restAttribute(m => m.name === 'Cylinder002');
+  // wheels: deep rims scale the rim cross-section toward the hub; nipples slide along their spoke;
+  // bladed spokes flatten the spoke cross-section (wide along the axle, thin in the direction of travel)
+  const wheel = pick(['Front_rim', 'Rear_rim', 'Spoke_nipples', 'Spokes']);
+  deform.wheels = new Deformer(wheel, (p, { depth, bladed }, it) => {
+    const name = it.mesh.name;
+    if (name.endsWith('_rim') && depth) {
+      const rOut = .306, k = (rOut - .2877 + depth) / (rOut - .2877);
+      for (let i = 0; i < p.length; i += 3) {
+        const [cx, cy] = p[i] > 0 ? HUBS[0] : HUBS[1], dx = p[i] - cx, dy = p[i+1] - cy, r = Math.hypot(dx, dy);
+        if (r < rOut) { const r2 = rOut - (rOut - r) * k; p[i] = cx + dx / r * r2; p[i+1] = cy + dy / r * r2; }
+      }
+    }
+    if (name === 'Spoke_nipples' && depth) for (const g of it.data.pieces.groups) {
+      const s = g.shift; for (const v of g.verts) { p[v*3] += s.x * depth; p[v*3+1] += s.y * depth; p[v*3+2] += s.z * depth; }
+    }
+    if (name === 'Spokes' && bladed) for (const g of it.data.pieces.groups) {
+      if (!g.axis) continue;
+      const { a, o, len } = g.axis, zd = new THREE.Vector3(0, 0, 1).addScaledVector(a, -a.z).normalize(), td = new THREE.Vector3().crossVectors(a, zd);
+      for (const v of g.verts) {
+        const q = new THREE.Vector3(p[v*3], p[v*3+1], p[v*3+2]).sub(o), along = q.dot(a), off = q.clone().addScaledVector(a, -along);
+        const w = smooth(.03, .07, along) * (1 - smooth(len - .03, len - .012, along));
+        const f = off.clone().addScaledVector(zd, off.dot(zd) * 1.3 * w).addScaledVector(td, -off.dot(td) * .5 * w);
+        p[v*3] = o.x + a.x * along + f.x; p[v*3+1] = o.y + a.y * along + f.y; p[v*3+2] = o.z + a.z * along + f.z;
+      }
+    }
+    return p;
+  });
+  const wi = n => deform.wheels.items.find(it => it.mesh.name === n);
+  const sp = wi('Spokes'), np = wi('Spoke_nipples');
+  if (sp) {
+    sp.data.pieces = pieces(sp.mesh.geometry, sp.rest, .001);
+    for (const g of sp.data.pieces.groups) {   // spoke axis from its hub end to its rim end
+      const [cx, cy] = g.c.x > 0 ? HUBS[0] : HUBS[1];
+      let lo = null, hi = null, rl = Infinity, rh = -Infinity;
+      for (const v of g.verts) { const r = Math.hypot(sp.rest[v*3] - cx, sp.rest[v*3+1] - cy); if (r < rl) { rl = r; lo = v; } if (r > rh) { rh = r; hi = v; } }
+      const o = new THREE.Vector3().fromArray(sp.rest, lo*3), e = new THREE.Vector3().fromArray(sp.rest, hi*3), len = o.distanceTo(e);
+      if (len > .15) g.axis = { o, a: e.sub(o).normalize(), len };
+    }
+  }
+  if (np) {
+    np.data.pieces = pieces(np.mesh.geometry, np.rest, .004);
+    const axes = (sp?.data.pieces.groups || []).filter(g => g.axis);
+    const colors = new Float32Array(np.rest.length).fill(1);
+    np.mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    for (const g of np.data.pieces.groups) {
+      const [cx, cy] = g.c.x > 0 ? HUBS[0] : HUBS[1], rad = new THREE.Vector3(g.c.x - cx, g.c.y - cy, 0).normalize();
+      let best = null, bd = Infinity;   // the spoke whose rim end is closest to this nipple
+      for (const s of axes) { const end = s.axis.o.clone().addScaledVector(s.axis.a, s.axis.len), d = end.distanceTo(g.c); if (d < bd) { bd = d; best = s; } }
+      const dir = best && bd < .03 ? best.axis.a.clone() : rad;
+      g.shift = dir.multiplyScalar(-1 / Math.max(.5, dir.dot(rad)));   // radial inward move of exactly 1 per unit depth
+      g.hue = (Math.atan2(g.c.y - cy, g.c.x - cx) / (Math.PI * 2) + 1) % 1;
+    }
+  }
+  // pedals: smaller platform, thicker body, inner edge stays on the spindle
+  const ped = pick(['Plane006']);
+  deform.pedals = new Deformer(ped, (p, style, it) => {
+    if (!style) return p;
+    for (const side of [1, -1]) {
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, zi = Infinity;
+      for (let i = 0; i < p.length; i += 3) if (Math.sign(p[i+2]) === side) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i+1]); y1 = Math.max(y1, p[i+1]); zi = Math.min(zi, Math.abs(p[i+2])); }
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+      for (let i = 0; i < p.length; i += 3) if (Math.sign(p[i+2]) === side) {
+        p[i] = cx + (p[i] - cx) * .62; p[i+1] = cy + (p[i+1] - cy) * 1.55; p[i+2] = side * (zi + (Math.abs(p[i+2]) - zi) * .66);
+      }
+    }
+    return p;
+  });
+}
+function rainbow(on, instant){
+  const np = deform.wheels?.items.find(it => it.mesh.name === 'Spoke_nipples'); if (!np) return;
+  const attr = np.mesh.geometry.attributes.color, from = attr.array.slice(), to = new Float32Array(from.length).fill(1), c = new THREE.Color();
+  if (on) for (const g of np.data.pieces.groups) { c.setHSL(g.hue, .85, .55); for (const v of g.verts) to.set([c.r, c.g, c.b], v * 3); }
+  run(attr, k => { for (let i = 0; i < to.length; i++) attr.array[i] = from[i] + (to[i] - from[i]) * k; attr.needsUpdate = true; }, instant);
+}
+
 /* ============ apply configuration ============ */
 const CTRL = {};
-for (const s of SECTIONS) for (const c of s.controls) { CTRL[c.key] = c; for (const sp of c.spots || []) for (const cc of sp.controls) CTRL[cc.key] = cc; }
+const addCtrl = c => { if (c.key) CTRL[c.key] = c; for (const cc of c.controls || []) addCtrl(cc); for (const sp of c.spots || []) sp.controls.forEach(addCtrl); };
+SECTIONS.forEach(s => s.controls.forEach(addCtrl));
 const opt = key => CTRL[key];
 const pick = key => opt(key).opts[state[key]] || opt(key).opts[0];
 
 function applyState(instant=false){
   const paint = pick('frame')[1], fin = FINISH[state.finish] || FINISH[0];
   const finish = { roughness:fin.roughness, metalness:fin.metalness, clearcoat:fin.clearcoat, clearcoatRoughness:fin.clearcoatRoughness };
-  for (const m of [M.frame, M.rear]) { const nm = fin.ns ? flake : null; if (m.normalMap !== nm) { m.normalMap = nm; m.needsUpdate = true; } m.normalScale.set(fin.ns, fin.ns); }
+  for (const m of [M.frame, M.rear]) m.normalScale.set(fin.ns, fin.ns);   // flake map stays bound: no recompile
   setMat(M.frame, { color: paint, ...finish }, instant);
   setMat(M.rear, { color: pick('rear')[1] ?? paint, ...finish }, instant);
+  // paint style
+  const F = U.frame;
+  fadeStyle(F.uStyleT, (slot, i) => { F['uStyle' + slot].value = i; }, state.paint, instant);
+  tweenU(F.uC2, pick('paint2')[1], instant);
+  F.uScale.value = state.paintScale; F.uAngle.value = state.splitAngle * Math.PI / 180; F.uFade.value = state.fadeLen / 100;
   const ano = pick('accent'); const oil = ano[0] === 'Oil Slick';
-  setMat(M.accent, { color: ano[1], iridescence: oil ? 1 : .0001, roughness: oil ? .18 : .28 }, instant);
+  const anoMat = { color: ano[1], iridescence: oil ? 1 : .0001, roughness: oil ? .18 : .28 };
+  setMat(M.accent, anoMat, instant);
+  setMat(M.nipples, { ...anoMat, color: state.nipples ? '#ffffff' : ano[1] }, instant);
+  if (M.nipples.userData.rainbow !== state.nipples) { M.nipples.userData.rainbow = state.nipples; rainbow(!!state.nipples, instant); }
   setMat(M.forkLow, { color: pick('fork')[1] }, instant);
   const up = pick('uppers'); setMat(M.forkUp, { color: up[1], metalness: up[0]==='Black' ? .8 : 1, roughness: up[0]==='Black' ? .12 : .18 }, instant);
   setMat(M.spring, { color: pick('spring')[1] }, instant);
   const rim = pick('rims'); setMat(M.rims, { color: rim[1], metalness: rim[0]==='Black' ? .75 : .95, roughness: rim[0]==='Raw Alloy' ? .25 : .35 }, instant);
   setMat(M.spokes, { color: pick('spokes')[1] }, instant);
   setMat(M.tires, { color: pick('rubber')[1] }, instant);
+  fadeStyle(U.tires.uWallT, (slot, i) => { U.tires['uWall' + slot].value = i; }, state.sidewall, instant);
+  tweenU(U.tires.uStripe, ano[1], instant);
   setMat(M.grips, { color: pick('grips')[1] }, instant);
+  fadeStyle(U.grips.uPatT, (slot, i) => { U.grips['uPat' + slot].value = GRIP_TEX[i]; }, state.gripPat, instant);
   setMat(M.bar, { color: pick('bar')[1] }, instant);
-  setMat(M.saddle, { color: pick('saddle')[1] }, instant);
+  const suede = state.cover === 3;
+  // sheen stays > 0 (sheen = 0 would drop the USE_SHEEN define and recompile)
+  setMat(M.saddle, { color: pick('saddle')[1], roughness: suede ? 1 : .62, sheen: suede ? 1 : .05, sheenRoughness: suede ? .32 : .7 }, instant);
+  fadeStyle(U.saddle.uCovT, (slot, i) => { U.saddle['uCov' + slot].value = SADDLE_TEX[i]; U.saddle['uPar' + slot].value.set(...SADDLE_PARAMS[i]); }, state.cover, instant);
   const ch = pick('chain'); const coil = ch[0] === 'Oil Slick';
   setMat(M.chain, { color: ch[1], iridescence: coil ? 1 : .0001, roughness: coil ? .16 : .3 }, instant);
   setMat(M.cranks, { color: pick('cranks')[1], metalness: state.cranks ? 1 : .8 }, instant);
   setMat(M.pedals, { color: pick('pedals')[1] }, instant);
 
   // part swaps & toggles
-  const slick = state.tread === 1;
-  knobbyTires.forEach(t => t.visible = !slick); slickTires.forEach(t => t.visible = slick);
+  const slick = state.tread !== 0;   // the sidewall decals only fit the GLB's knobby tire
+  treads.forEach((list, i) => list.forEach(t => t.visible = i === state.tread));
+  collars.outer.forEach(m => m.visible = state.collars === 0);
+  collars.inner.forEach(m => m.visible = state.collars !== 2);
   if (nodes.Guard) nodes.Guard.visible = state.guide === 0;
   if (nodes.Pedals) nodes.Pedals.visible = state.pedalsOn === 0;
   const off = SEAT_AXIS.clone().multiplyScalar(state.height / 100);
   const local = off.applyAxisAngle(new THREE.Vector3(0,1,0), Math.PI/2); // world → bike-local
   for (const n of ['Seat', 'Seatpost']) if (nodes[n]) nodes[n].position.copy(nodes[n].userData.basePos).add(local);
+  // shape changes (cached, eased over --slow)
+  deform.cockpit?.set({ rise: BAR_RISE[state.rise]?.[2] ?? 0, dw: BAR_WIDTH[state.width]?.[2] ?? 0 }, instant);
+  deform.saddle?.set(SADDLE_SHAPES[state.saddleShape]?.[2] ?? 0, instant);
+  deform.wheels?.set({ depth: RIM_DEPTHS[state.rimDepth]?.[2] ?? 0, bladed: SPOKE_SHAPES[state.spokeShape]?.[2] ?? 0 }, instant);
+  deform.pedals?.set(PEDAL_STYLES[state.pedalStyle]?.[2] ?? 0, instant);
 
   // stickers & custom text
   drawTexts();
@@ -390,7 +561,8 @@ renderer.setAnimationLoop(now => {
     camera.position.lerpVectors(tween.from.c, tween.to.c, k); controls.target.lerpVectors(tween.from.t, tween.to.t, k);
     if (t >= 1) tween = null;
   }
-  for (const [mat, a] of anims) { const t = Math.min(1, (now - a.start) / a.dur); lerpMat(mat, a.from, a.to, 1 - Math.pow(1 - t, 3)); if (t >= 1) anims.delete(mat); }
+  for (const [key, a] of anims) { const t = Math.min(1, (now - a.start) / a.dur); if (t >= 1) anims.delete(key); a.step(1 - Math.pow(1 - t, 3)); }
+  for (const d of Object.values(deform)) d.step(now);
   controls.update(); renderer.render(scene, camera);
 });
 controls.addEventListener('start', () => { tween = null; document.getElementById('hint').style.opacity = 0; document.querySelectorAll('[data-view]').forEach(b => b.classList.remove('on')); });
@@ -420,7 +592,9 @@ const fmt = n => (n < 0 ? '−€' : '€') + Math.abs(n).toLocaleString('en-US'
 const chev = '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const bg = o => o[0] === 'Oil Slick' ? OIL : (o[1] ?? 'transparent');
 
-const when = c => c.when ? ` data-when="${c.when[0]}:${c.when[1]}"` : '';
+const when = c => c.when ? ` data-when="${c.when[0]}:${[].concat(c.when[1]).join(',')}"` : '';
+const pv = c => ` data-pv="${c.key}"`;
+let moreId = 0;
 function control(c){
   const w = when(c);
   if (c.type === 'color') return `<div class="ctrl"${w}><div class="glabel">${c.label} <b data-cl="${c.key}"></b></div><div class="swatches" role="radiogroup" aria-label="${c.label}">` +
@@ -431,9 +605,15 @@ function control(c){
     c.opts.map((o,i) => `<button role="radio" aria-checked="false" data-k="${c.key}" data-i="${i}"><span class="fxp fx${i}" aria-hidden="true">A</span>${o[0]}</button>`).join('') + '</div></div>';
   if (c.type === 'font') return `<div class="ctrl"${w}><div class="glabel">${c.label} <b data-cl="${c.key}"></b></div><div class="fonts" role="radiogroup" aria-label="${c.label}">` +
     c.opts.map((o,i) => `<button class="fontcard" role="radio" aria-checked="false" data-k="${c.key}" data-i="${i}" title="${o[0]}" aria-label="${o[0]}"><span style="font-family:'${o[1]}',sans-serif;font-weight:${o[2]}">Ab</span></button>`).join('') + '</div></div>';
+  if (c.type === 'style' || c.type === 'pattern') return `<div class="ctrl"${w}><div class="glabel">${c.label} <b data-cl="${c.key}"></b></div><div class="cards"${pv(c)} role="radiogroup" aria-label="${c.label}">` +
+    c.opts.map((o,i) => `<button class="card pcard" role="radio" aria-checked="false" data-k="${c.key}" data-i="${i}"><i class="chip" style="background:${o[3] || 'var(--c1)'}" aria-hidden="true"></i><b>${o[0]}</b><span>${o[2]?`+${fmt(o[2])} · `:''}${o[1]}</span></button>`).join('') + '</div></div>';
+  if (c.type === 'deform') return `<div class="ctrl"${w}><div class="glabel">${c.label}</div><div class="seg" role="radiogroup" aria-label="${c.label}">` +
+    c.opts.map((o,i) => `<button role="radio" aria-checked="false" data-k="${c.key}" data-i="${i}">${o[0]}${o[1]?`<small>+${o[1]}</small>`:''}</button>`).join('') + '</div></div>';
+  if (c.type === 'more') { const id = 'more-' + (++moreId); return `<div class="ctrl more"><button class="moreBtn" aria-expanded="false" aria-controls="${id}" data-more>More options ${chev}</button><div class="moreBody" id="${id}"><div><div class="moreInner">${c.controls.map(control).join('')}</div></div></div></div>`; }
   if (c.type === 'cards') return `<div class="ctrl"${w}><div class="glabel">${c.label}</div><div class="cards" role="radiogroup" aria-label="${c.label}">` +
     c.opts.map((o,i) => `<button class="card" role="radio" aria-checked="false" data-k="${c.key}" data-i="${i}"><b>${o[0]}</b><span>${o[1]}</span></button>`).join('') + '</div></div>';
-  if (c.type === 'range') return `<div class="ctrl"${w}><div class="glabel">${c.label} <b data-cl="${c.key}"></b></div><input class="range" type="range" min="${c.min}" max="${c.max}" step="1" data-range="${c.key}" aria-label="${c.label}"><div class="rangeRow"><span>${c.min} ${c.unit}</span><span>+${c.max} ${c.unit}</span></div></div>`;
+  if (c.type === 'range') { const [lo, hi] = c.labels || (c.min < 0 ? [`${c.min} ${c.unit}`, `+${c.max} ${c.unit}`] : [`${c.min}${c.unit}`, `${c.max}${c.unit}`]);
+    return `<div class="ctrl"${w}><div class="glabel">${c.label} <b data-cl="${c.key}"></b></div><input class="range" type="range" min="${c.min}" max="${c.max}" step="${c.step || 1}" data-range="${c.key}" aria-label="${c.label}"><div class="rangeRow"><span>${lo}</span><span>${hi}</span></div></div>`; }
   if (c.type === 'toggle') return `<div class="ctrl"${w}><button class="toggle" role="switch" aria-checked="false" data-toggle="${c.key}"><span>${c.label}</span><i aria-hidden="true"></i></button></div>`;
   if (c.type === 'text') return `<div class="ctrl"${w}><input class="textIn" maxlength="${c.max}" placeholder="${c.placeholder}" data-text="${c.key}" aria-label="${c.label}" autocomplete="off" spellcheck="false"><div class="help">Letters, numbers, spaces and - . &amp; ' · up to ${c.max}</div></div>`;
   if (c.type === 'spots') return `<div class="ctrl"><div class="glabel">${c.label} <b>+${fmt(TEXT_PRICE)} each · max ${fmt(TEXT_PRICE_MAX)}</b></div><div class="spots">` +
@@ -458,30 +638,37 @@ document.getElementById('presets').innerHTML = PRESETS.map((p,i) => {
   return `<button class="preset" data-preset="${i}"><span class="dots">${dots.map(d => `<i style="background:${d}"></i>`).join('')}</span>${p.name}</button>`;
 }).join('');
 
-const customSpots = () => TEXT_SPOTS.filter(sp => state[sp.key].trim()).length;
+// sidewall text only fits the GLB's knobby tire (see docs/ROADMAP.md), so it is neither shown nor charged on other treads
+const spotShown = sp => !(sp.arc && state.tread !== 0);
+const customSpots = () => TEXT_SPOTS.filter(sp => state[sp.key].trim() && spotShown(sp)).length;
 const textTotal = () => Math.min(customSpots() * TEXT_PRICE, TEXT_PRICE_MAX);
 function extrasTotal(){
   let sum = textTotal();
   for (const c of Object.values(CTRL)) {
     if (!c.opts || c.type === 'font') continue;
     const o = c.opts[state[c.key]]; if (!o) continue;
-    const p = c.type === 'seg' || c.type === 'effect' ? o[1] : o[2]; if (p) sum += p;
+    const p = ['seg', 'effect', 'deform'].includes(c.type) ? o[1] : o[2]; if (p) sum += p;
   }
   return sum;
 }
 function summary(s){
   const v = k => pick(k)[0];
   switch (s.id) {
-    case 'frame': return `${v('frame')} · ${v('finish')}`;
+    case 'frame': {
+      const st = v('paint'), a = v('frame'), b = v('paint2');
+      if (!state.paint) return `${a} · ${v('finish')}`;
+      if (state.paint === 5) return `Carbon weave · ${v('finish')}`;
+      return state.paint === 1 ? `Fade · ${a} → ${b}` : `${st} · ${a} / ${b}`;
+    }
     case 'rear': return v('rear');
     case 'fork': return v('fork') + (state.uppers ? ' · Kashima' : '');
     case 'shock': return v('spring') + ' spring';
-    case 'wheels': return `${v('rims')} rims`;
-    case 'tires': return `${v('tread')} · ${v('rubber')}`;
-    case 'cockpit': return `${v('grips')} grips`;
-    case 'saddle': return v('saddle') + (state.height ? ` · ${state.height>0?'+':''}${state.height} cm` : '');
+    case 'wheels': return `${v('rims')} rims` + (state.rimDepth ? ' · Deep' : '') + (state.spokeShape ? ' · Bladed' : '') + (state.nipples ? ' · Rainbow' : '');
+    case 'tires': return `${v('tread')} · ${state.sidewall ? v('sidewall') : v('rubber')}`;
+    case 'cockpit': return `${v('grips')} ${v('gripPat').toLowerCase()} grips · ${v('width')}` + (state.rise ? ` · ${v('rise').toLowerCase()}` : '');
+    case 'saddle': return [state.saddleShape ? v('saddleShape') : '', `${v('saddle')} ${v('cover').toLowerCase()}`, state.height ? `${state.height>0?'+':''}${state.height} cm` : ''].filter(Boolean).join(' · ');
     case 'drive': return `${v('chain')} chain${state.guide ? ' · no guide' : ''}`;
-    case 'pedals': return state.pedalsOn ? 'No pedals' : v('pedals');
+    case 'pedals': return state.pedalsOn ? 'No pedals' : `${v('pedals')}${state.pedalStyle ? ' · clip-in look' : ''}`;
     case 'stickers': { const n = customSpots(); return n ? `${n} custom · ${fmt(textTotal())}` : (state.logos ? 'Logos hidden' : 'Original logos'); }
     default: return v(s.controls[0].key);
   }
@@ -499,7 +686,7 @@ function updateUI(){
   }
   document.querySelectorAll('[data-cl]').forEach(el => {
     const c = opt(el.dataset.cl);
-    if (c.type === 'range') { const h = state[c.key]; el.textContent = h === 0 ? 'Standard' : `${h>0?'+':''}${h} ${c.unit}`; return; }
+    if (c.type === 'range') { const h = state[c.key]; el.textContent = c.labels ? '' : c.min < 0 ? (h === 0 ? 'Standard' : `${h>0?'+':''}${h} ${c.unit}`) : `${h}${c.unit}`; return; }
     const o = c.opts[state[c.key]]; el.textContent = o[0] + (c.type === 'color' && o[2] ? ` · +${fmt(o[2])}` : '');
   });
   document.querySelectorAll('[data-k]').forEach(b => b.setAttribute('aria-checked', String(+b.dataset.i === state[b.dataset.k])));
@@ -507,12 +694,20 @@ function updateUI(){
   document.querySelectorAll('[data-text]').forEach(t => { if (document.activeElement !== t) t.value = state[t.dataset.text]; });
   // "match" swatches preview the color they borrow
   document.querySelectorAll('[data-match]').forEach(b => { b.firstElementChild.style.background = `conic-gradient(from 45deg, ${b.dataset.match === 'frame' ? pick('frame')[1] : bg(pick('accent'))} 0 50%, var(--surface) 0 100%)`; });
-  document.querySelectorAll('[data-when]').forEach(el => { const [k, v] = el.dataset.when.split(':'); el.hidden = state[k] !== +v; });
+  document.querySelectorAll('[data-when]').forEach(el => { const [k, v] = el.dataset.when.split(':'); el.hidden = !v.split(',').map(Number).includes(state[k]); });
+  document.querySelectorAll('.more').forEach(el => { el.hidden = ![...el.querySelectorAll('.moreInner>.ctrl')].some(c => !c.hidden); });
+  // card previews use the part's live colors
+  const pvc = { paint: [pick('frame')[1], pick('paint2')[1]], tread: [pick('rubber')[1]], sidewall: [pick('rubber')[1]], gripPat: [pick('grips')[1]], cover: [pick('saddle')[1]] };
+  document.querySelectorAll('[data-pv]').forEach(el => {
+    const [c1, c2 = c1] = pvc[el.dataset.pv] || [];
+    el.style.setProperty('--c1', c1); el.style.setProperty('--c2', c2);
+    el.style.setProperty('--c3', `color-mix(in srgb, ${c1} 50%, ${c2}) `); el.style.setProperty('--ac', bg(pick('accent'))); el.style.setProperty('--c0', 'var(--hover)');
+  });
   document.querySelectorAll('[data-toggle]').forEach(b => b.setAttribute('aria-checked', String(!!state[b.dataset.toggle])));
   for (const sp of TEXT_SPOTS) {
     const custom = !!state[sp.key].trim();
     document.getElementById('spot-' + sp.id).classList.toggle('custom', custom);
-    document.getElementById('spval-' + sp.id).textContent = custom ? `“${spotText(sp)}”` : (state.logos ? 'Hidden' : 'Original logo');
+    document.getElementById('spval-' + sp.id).textContent = !spotShown(sp) ? 'Knobby tread only' : custom ? `“${spotText(sp)}”` : (state.logos ? 'Hidden' : 'Original logo');
     document.querySelectorAll(`[data-mode="${sp.id}"]`).forEach(b => b.setAttribute('aria-checked', String(+b.dataset.v === +custom)));
     document.querySelector(`[data-text="${sp.key}"]`).classList.toggle('asis', state[sp.id + 'Case'] === 1);
   }
@@ -558,6 +753,7 @@ document.addEventListener('click', e => {
   const h = e.target.closest('[data-sec]'); if (h) { openSection(h.dataset.sec); return; }
   const o = e.target.closest('[data-k]'); if (o) { state[o.dataset.k] = +o.dataset.i; commit(); return; }
   const sh = e.target.closest('[data-spot]'); if (sh) { openSpot(sh.dataset.spot); return; }
+  const mo = e.target.closest('[data-more]'); if (mo) { const open = mo.getAttribute('aria-expanded') !== 'true'; mo.setAttribute('aria-expanded', String(open)); mo.parentElement.classList.toggle('open', open); return; }
   const md = e.target.closest('[data-mode]'); if (md) {
     const sp = TEXT_SPOTS.find(s => s.id === md.dataset.mode), input = document.querySelector(`[data-text="${sp.key}"]`);
     if (+md.dataset.v) { if (!state[sp.key].trim()) state[sp.key] = sp.def; commit(); input.focus(); input.select(); }

@@ -43,13 +43,63 @@ const styleControls = (font, col, fx, when) => [
 for (const s of TEXT_SPOTS) s.controls = [
   { type:'text', key:s.key, label:'Text', placeholder:s.def, max:s.max },
   { type:'seg', key:s.id + 'Case', label:'Letters', opts:[['UPPERCASE',0],['As typed',0]] },
-  ...styleControls(s.id + 'Font', s.id + 'Col', s.id + 'Fx', ['sameStyle', 0]),
+  ...styleControls(s.id + 'Font', s.id + 'Col', s.id + 'Fx', ['sameStyle', [0]]),
 ];
+
+/* ============ styles (shape, pattern, texture) ============ */
+// style / pattern opts: [title, subtitle, price, preview]. The preview is a CSS background for the tiny chip
+// on the card; --c1 / --c2 are filled in with the part's current colors.
+const CARBON_PV = 'repeating-conic-gradient(#2a2a2e 0 25%,#141416 0 50%) 0 0/6px 6px';
+export const PAINT_STYLES = [
+  ['Solid','One color',0,'var(--c1)'],
+  ['Fade','Head tube to rear axle',150,'linear-gradient(120deg,var(--c1) 15%,var(--c2) 85%)'],
+  ['Split','Hard color split',120,'linear-gradient(120deg,var(--c1) 50%,var(--c2) 50%)'],
+  ['Camo','Three-tone pattern',190,'radial-gradient(circle at 30% 35%,var(--c2) 0 22%,transparent 23%),radial-gradient(circle at 72% 70%,var(--c3) 0 26%,transparent 27%),var(--c1)'],
+  ['Splatter','Paint splats',160,'radial-gradient(circle at 28% 32%,var(--c2) 0 14%,transparent 15%),radial-gradient(circle at 66% 60%,var(--c2) 0 20%,transparent 21%),radial-gradient(circle at 80% 22%,var(--c2) 0 7%,transparent 8%),var(--c1)'],
+  ['Carbon weave','Raw carbon, clear coated',450,CARBON_PV],
+];
+export const TREADS = [
+  ['Knobby DH','Max grip, loose & wet',0,'radial-gradient(circle,var(--c1) 0 38%,transparent 40%) 0 0/6px 6px,var(--c0)'],
+  ['Semi-slick','Bike park & dry hardpack',0,'radial-gradient(circle,var(--c1) 0 30%,transparent 32%) 0 0/8px 8px,linear-gradient(var(--c0),var(--c0)) center/100% 40% no-repeat,var(--c1)'],
+  ['Slick street','Pump track & tarmac',0,'var(--c1)'],
+  ['Mud spike','Deep mud & roots',20,'linear-gradient(90deg,var(--c1) 0 40%,transparent 40%) 0 0/7px 100%,var(--c0)'],
+];
+export const SIDEWALLS = [
+  ['All black','Classic',0,'var(--c1)'],
+  ['Tan wall','Gum sidewall',30,'radial-gradient(circle,transparent 0 38%,var(--c1) 39% 60%,#B98A5B 61%)'],
+  ['Colored stripe','Matches anodized parts',25,'radial-gradient(circle,transparent 0 38%,var(--c1) 39% 52%,var(--ac) 53% 58%,var(--c1) 59%)'],
+];
+export const GRIP_PATTERNS = [
+  ['Waffle','Classic DH',0,'linear-gradient(90deg,rgb(0 0 0/.45) 1px,transparent 1px) 0 0/5px 5px,linear-gradient(rgb(0 0 0/.45) 1px,transparent 1px) 0 0/5px 5px,var(--c1)'],
+  ['Diamond','Knurled',0,'repeating-linear-gradient(45deg,rgb(0 0 0/.45) 0 1px,transparent 1px 5px),repeating-linear-gradient(-45deg,rgb(0 0 0/.45) 0 1px,transparent 1px 5px),var(--c1)'],
+  ['Ribbed','Thin rings',0,'repeating-linear-gradient(90deg,rgb(0 0 0/.45) 0 1px,transparent 1px 4px),var(--c1)'],
+  ['Smooth','Soft compound',0,'var(--c1)'],
+];
+export const SADDLE_COVERS = [
+  ['Smooth','Microfiber',0,'var(--c1)'],
+  ['Perforated','Vented top',0,'radial-gradient(circle,rgb(0 0 0/.55) 0 22%,transparent 26%) 0 0/5px 5px,var(--c1)'],
+  ['Stitched','Quilted panel',25,'repeating-linear-gradient(45deg,rgb(255 255 255/.35) 0 1px,transparent 1px 7px),repeating-linear-gradient(-45deg,rgb(255 255 255/.35) 0 1px,transparent 1px 7px),var(--c1)'],
+  ['Suede','Soft, high grip',35,'radial-gradient(circle at 30% 30%,rgb(255 255 255/.18),transparent 60%),var(--c1)'],
+];
+// deform opts: [label, price, value]; the value drives the geometry deformation in main.js
+export const BAR_RISE  = [['Low rise',0,0],['High rise',0,.02],['Flat',0,-.0205]];      // m at the grips (stock bar rises 20 mm)
+export const BAR_WIDTH = [['760 mm',0,-.01],['780 mm',0,0],['800 mm',0,.01]];           // m per side
+export const SADDLE_SHAPES = [['Standard',0,0],['Slim race',40,1],['Plush',20,2]];
+export const RIM_DEPTHS = [['Standard',0,0],['Deep',120,.018]];                          // m deeper toward the hub
+export const SPOKE_SHAPES = [['Round',0,0],['Bladed',90,1]];
+export const PEDAL_STYLES = [['Flat',0,0],['Clip-in look',40,1]];
 
 export const SECTIONS = [
   { id:'frame', name:'Frame', focus:'frame', controls:[
     { type:'color', key:'frame', label:'Main frame', opts:PAINT },
+    { type:'style', key:'paint', label:'Paint style', opts:PAINT_STYLES },
+    { type:'color', key:'paint2', label:'Second color', opts:PAINT, when:['paint',[1,2,3,4,5]] },
+    { type:'range', key:'paintScale', label:'Pattern scale', min:1, max:9, labels:['Fine','Bold'], when:['paint',[3,4]] },
     { type:'seg', key:'finish', label:'Finish', opts:[['Gloss',0],['Satin',0],['Matte',0],['Metallic',150]] },
+    { type:'more', controls:[
+      { type:'range', key:'splitAngle', label:'Split angle', min:0, max:170, step:10, unit:'°', when:['paint',[2]] },
+      { type:'range', key:'fadeLen', label:'Fade length', min:20, max:100, step:10, unit:'%', when:['paint',[1]] },
+    ]},
   ]},
   { id:'rear', name:'Rear triangle', focus:'rear', controls:[
     { type:'color', key:'rear', label:'Rear triangle', opts:[['Match frame',null],...PAINT], match:true },
@@ -66,18 +116,32 @@ export const SECTIONS = [
   ]},
   { id:'wheels', name:'Wheels', focus:'wheel', controls:[
     { type:'color', key:'rims', label:'Rims', opts:[['Black','#18181A'],['Raw Alloy','#BFC3C8'],['Gold','#C99A2E',90],['Red','#A3121B',90],['Blue','#1E5AA8',90]] },
+    { type:'deform', key:'rimDepth', label:'Rim depth', opts:RIM_DEPTHS },
     { type:'color', key:'spokes', label:'Spokes', opts:[['Black','#1E1E20'],['Silver','#D3D6DA']] },
+    { type:'more', controls:[
+      { type:'deform', key:'spokeShape', label:'Spoke shape', opts:SPOKE_SHAPES },
+      { type:'seg', key:'nipples', label:'Nipples', opts:[['Match anodized',0],['Rainbow',29]] },
+    ]},
   ]},
   { id:'tires', name:'Tires', focus:'wheel', controls:[
-    { type:'cards', key:'tread', label:'Tread', opts:[['Knobby DH','Max grip, loose & wet',0],['Semi-slick','Bike park & dry hardpack',0]] },
     { type:'color', key:'rubber', label:'Rubber', opts:[['Black','#1B1B1B'],['Charcoal','#3A3A3C'],['Gum Brown','#6A4A2E',39]] },
+    { type:'style', key:'tread', label:'Tread', opts:TREADS },
+    { type:'style', key:'sidewall', label:'Sidewall', opts:SIDEWALLS },
   ]},
   { id:'cockpit', name:'Cockpit', focus:'cockpit', controls:[
     { type:'color', key:'grips', label:'Grips', opts:[['Blue','#2457E6'],['Black','#171717'],['Red','#B3121C'],['Orange','#E8641E'],['Mint','#93D1BA'],['Grey','#7A7D82']] },
+    { type:'pattern', key:'gripPat', label:'Grip pattern', opts:GRIP_PATTERNS },
     { type:'color', key:'bar', label:'Handlebar', opts:[['Black','#18181A'],['Raw Alloy','#BFC3C8'],['Gold','#C99A2E',60]] },
+    { type:'deform', key:'rise', label:'Bar shape', opts:BAR_RISE },
+    { type:'deform', key:'width', label:'Bar width', opts:BAR_WIDTH },
+    { type:'more', controls:[
+      { type:'seg', key:'collars', label:'Lock-on collars', opts:[['Double',0],['Single',0],['None',0]] },
+    ]},
   ]},
   { id:'saddle', name:'Saddle', focus:'saddle', controls:[
     { type:'color', key:'saddle', label:'Cover', opts:[['Black','#151515'],['Brown','#6B3F22',35],['Tan','#B07A45',35],['White','#E9E7E2'],['Blue','#2457E6']] },
+    { type:'deform', key:'saddleShape', label:'Shape', opts:SADDLE_SHAPES },
+    { type:'pattern', key:'cover', label:'Cover texture', opts:SADDLE_COVERS },
     { type:'range', key:'height', label:'Saddle height', min:-6, max:4, unit:'cm' },
   ]},
   { id:'drive', name:'Drivetrain', focus:'drive', controls:[
@@ -87,12 +151,13 @@ export const SECTIONS = [
   ]},
   { id:'pedals', name:'Pedals', focus:'pedals', controls:[
     { type:'seg', key:'pedalsOn', label:'Pedals', opts:[['Flat pedals',0],['No pedals',-79]] },
-    { type:'color', key:'pedals', label:'Body color', opts:[['Black','#18181A'],['Red','#B5121B'],['Blue','#1E5AA8'],['Orange','#E8641E'],['Gold','#C9A24A']] },
+    { type:'color', key:'pedals', label:'Body color', opts:[['Black','#18181A'],['Red','#B5121B'],['Blue','#1E5AA8'],['Orange','#E8641E'],['Gold','#C9A24A']], when:['pedalsOn',[0]] },
+    { type:'deform', key:'pedalStyle', label:'Platform', opts:PEDAL_STYLES, when:['pedalsOn',[0]] },
   ]},
   { id:'stickers', name:'Text & stickers', focus:'frame', controls:[
     { type:'seg', key:'logos', label:'Original logos', opts:[['Show',0],['Hide',0]] },
     { type:'toggle', key:'sameStyle', label:'Use same text style everywhere' },
-    ...styleControls('txtFont', 'logoColor', 'txtFx', ['sameStyle', 1]),
+    ...styleControls('txtFont', 'logoColor', 'txtFx', ['sameStyle', [1]]),
     { type:'spots', key:'spots', label:'Text spots', spots:TEXT_SPOTS },
   ]},
 ];
@@ -103,11 +168,17 @@ export const PRESETS = [
   { name:'Race Red', c:{ frame:2, finish:0, rear:4, accent:1, fork:0, spring:1, rims:0, spokes:0, grips:2, saddle:0, chain:0, logoColor:1 } },
   { name:'Papaya', c:{ frame:6, finish:1, rear:2, accent:5, fork:1, spring:2, rims:0, grips:1, logoColor:1 } },
   { name:'Oil & Gold', c:{ frame:8, finish:3, rear:0, accent:6, fork:3, uppers:1, spring:0, rims:2, grips:1, chain:3, cranks:0, logoColor:2 } },
+  { name:'Team Edition', c:{ frame:2, paint:2, paint2:3, splitAngle:60, finish:0, accent:1, fork:2, spring:1, grips:1, sidewall:2, rimDepth:1, txtFont:1, logoColor:1,
+    frameTxt:'TEAM GRAVITY', tiresTxt:'GRAVITY RACE', forkTxt:'GRAVITY 200', name:'TEAM EDITION' } },
+  { name:'Camo Raw', c:{ frame:5, paint:3, paint2:7, paintScale:5, finish:2, accent:5, fork:0, spring:2, grips:1, gripPat:0, saddle:0, cover:3, sidewall:1, logoColor:1 } },
+  { name:'Street Slick', c:{ frame:9, paint:1, paint2:1, finish:1, accent:2, spring:0, tread:2, sidewall:1, rise:2, width:0, saddleShape:1, cover:1, pedalStyle:1, rims:0, logoColor:0 } },
 ];
 
 export const DEFAULT = { frame:0, finish:0, rear:0, accent:0, fork:0, uppers:0, spring:0, rims:0, spokes:0, tread:0, rubber:0,
   grips:0, bar:0, saddle:0, height:0, chain:0, cranks:0, guide:0, pedalsOn:0, pedals:0, logos:0, logoColor:0,
-  sameStyle:1, txtFont:0, txtFx:0 };
+  sameStyle:1, txtFont:0, txtFx:0,
+  paint:0, paint2:1, paintScale:4, splitAngle:60, fadeLen:80, sidewall:0, gripPat:0, rise:0, width:1, collars:0,
+  saddleShape:0, cover:0, rimDepth:0, spokeShape:0, nipples:0, pedalStyle:0 };
 for (const s of TEXT_SPOTS) Object.assign(DEFAULT, { [s.key]:'', [s.id+'Case']:0, [s.id+'Font']:0, [s.id+'Col']:0, [s.id+'Fx']:0 });
 
 /* ============ camera views (meters, bike faces +X, drive side +Z) ============ */
