@@ -21,6 +21,13 @@ Existing share links keep working only if you **append** new items, because stat
 ## Add a section
 Push to `SECTIONS`: `{ id, name, focus:'<VIEWS key>', controls:[…] }`. Add a camera view to `VIEWS` if you need one.
 
+## Text spots
+- Change a spot's default text, length or camera view in `TEXT_SPOTS`.
+- Change the price with `TEXT_PRICE` (per spot) and `TEXT_PRICE_MAX` (cap for all spots together).
+- Add a font: append `['Label', 'CSS family', weight]` to `FONTS` and add the family to the Google Fonts link in `index.html`. Sans or display only, never mono.
+- Add a sticker color: append to `STICKER_COLORS`. Use `[name, null, 0, 'frame' | 'accent']` for a "match" color.
+- A new decal mesh in the GLB: add its node name to a spot's `nodes` regex. If its text reads mirrored on the bike, also add it to `flip`.
+
 ## Add a preset
 Push `{ name, c:{ key:index, … } }` to `PRESETS`. Keys you leave out fall back to `DEFAULT`.
 

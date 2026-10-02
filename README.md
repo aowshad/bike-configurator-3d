@@ -11,7 +11,7 @@ A realistic, real-time 3D bike configurator for the browser. Pick paint and fini
 - **Anodized kit:** hubs, stem, nipples, clamps and fork knobs change color together, including an iridescent **Oil Slick** option.
 - **Components:** fork lowers, Kashima uppers, shock spring, rims, spokes, grips, bar, saddle, chain, cranks and pedals.
 - **Part swaps:** knobby DH ↔ semi-slick tires, chain guide on/off, pedals on/off, and a saddle height slider.
-- **Stickers:** show or hide logos, pick a sticker color, and add **custom down tube text** on both sides.
+- **Text & stickers:** custom text on all 8 logo spots (down tube, frame, tires, fork, shock, cranks, brakes, drivetrain) with 5 fonts, sticker colors and outline, shadow or italic effects. Tire text follows the sidewall.
 - **UX:** presets, click any part to edit it, a camera that flies to the part you're editing, live price, share link (the build is saved in the URL), image export, and light/dark themes.
 - **Stack:** a static site with three.js r170 from a CDN. No build step.
 

@@ -12,6 +12,40 @@ export const PAINT = [
   ['Purple Haze','#5D3FA0'],['Petrol','#0E5866'],['Mint','#93D1BA'],['Acid Yellow','#D9D21C'],
 ];
 export const ANO = [['Blue','#2457E6'],['Red','#C81E2A'],['Gold','#C99A2E'],['Purple','#6B3FCF'],['Orange','#E8641E'],['Black','#1C1C1F'],['Oil Slick','#6E6A86',120]];
+
+/* ============ custom text ============ */
+// [label, CSS family, weight]. Sans/display only, never mono. Loaded in index.html.
+export const FONTS = [['Inter Black','Inter',900],['Archivo Black','Archivo Black',400],['Bebas Neue','Bebas Neue',400],['Racing Sans','Racing Sans One',400],['Marker','Permanent Marker',400]];
+export const EFFECTS = [['None',0],['Outline',0],['Shadow',0],['Italic',0]];
+// a null hex means "match": opts[i][3] names the slot whose color is used
+export const STICKER_COLORS = [['White','#F4F4F2'],['Black','#111111'],['Gold','#C99A2E'],['Match anodized',null,0,'accent'],['Match frame',null,0,'frame'],['Red','#B3121C']];
+export const TEXT_PRICE = 25, TEXT_PRICE_MAX = 100;   // per custom spot, capped
+export const TEXT_CHARS = /[^\p{L}\p{N} \-.&']/gu;     // everything else is stripped
+// Every logo spot on the bike. `nodes` matches GLB node names (three.js strips the dots).
+// `arc`: text follows the tire sidewall, between these radii from the hub (m). `fit`: [width, height] share of the spot.
+// `flip`: meshes whose UVs are mirrored (none in the current model, both sides were checked).
+export const TEXT_SPOTS = [
+  { id:'down',   name:'Down tube',  key:'name', def:'GRAVITY DH',   max:14, view:'downtube', nodes:/^nsbikeslogoDecal\.?00[13]$/ },
+  { id:'frame',  name:'Frame',      def:'GRAVITY',      max:12, view:'frame',    nodes:/^(nsbikeslogoDecal(\.?002)?|nsbikeslogoDecal2|fuzzDecal)$/ },
+  { id:'tires',  name:'Tires',      def:'GRAVITY TRAX', max:16, view:'tire',     nodes:/^(maxxis|highrollerii)logoDecal/, arc:[.314,.352] },
+  { id:'fork',   name:'Fork',       def:'GRAVITY 200',  max:12, view:'forkLow',  nodes:/^boxxerlogoDecal/, fit:[.9,.62] },
+  { id:'shock',  name:'Shock',      def:'COIL',         max:8,  view:'shockLogo',nodes:/^ohlinsDecal/ },
+  { id:'cranks', name:'Cranks',     def:'GRAVITY',      max:10, view:'cranks',   nodes:/^racefaceDecal/, fit:[.6,.5] },
+  { id:'brakes', name:'Brakes',     def:'4 PISTON',     max:10, view:'brakes',   nodes:/^(GuideLeverDecal(\.?00[0-4])?|guideCaliperDecal.*)$/ },
+  { id:'drive',  name:'Drivetrain', def:'7 SPEED',      max:8,  view:'derailleur', nodes:/^(gxDecal|GuideLeverDecal\.?005)$/ },
+];
+for (const s of TEXT_SPOTS) s.key ??= s.id + 'Txt';
+const styleControls = (font, col, fx, when) => [
+  { type:'font', key:font, label:'Font', opts:FONTS, when },
+  { type:'color', key:col, label:'Color', opts:STICKER_COLORS, match:true, when },
+  { type:'effect', key:fx, label:'Effect', opts:EFFECTS, when },
+];
+for (const s of TEXT_SPOTS) s.controls = [
+  { type:'text', key:s.key, label:'Text', placeholder:s.def, max:s.max },
+  { type:'seg', key:s.id + 'Case', label:'Letters', opts:[['UPPERCASE',0],['As typed',0]] },
+  ...styleControls(s.id + 'Font', s.id + 'Col', s.id + 'Fx', ['sameStyle', 0]),
+];
+
 export const SECTIONS = [
   { id:'frame', name:'Frame', focus:'frame', controls:[
     { type:'color', key:'frame', label:'Main frame', opts:PAINT },
@@ -55,10 +89,11 @@ export const SECTIONS = [
     { type:'seg', key:'pedalsOn', label:'Pedals', opts:[['Flat pedals',0],['No pedals',-79]] },
     { type:'color', key:'pedals', label:'Body color', opts:[['Black','#18181A'],['Red','#B5121B'],['Blue','#1E5AA8'],['Orange','#E8641E'],['Gold','#C9A24A']] },
   ]},
-  { id:'stickers', name:'Stickers', focus:'frame', controls:[
-    { type:'seg', key:'logos', label:'Logos', opts:[['Show',0],['Hide',0]] },
-    { type:'color', key:'logoColor', label:'Sticker color', opts:[['White','#F4F4F2'],['Black','#111111'],['Gold','#C99A2E'],['Match anodized',null]], match:true },
-    { type:'text', key:'name', label:'Down tube text', placeholder:'YOUR NAME', max:14, price:25 },
+  { id:'stickers', name:'Text & stickers', focus:'frame', controls:[
+    { type:'seg', key:'logos', label:'Original logos', opts:[['Show',0],['Hide',0]] },
+    { type:'toggle', key:'sameStyle', label:'Use same text style everywhere' },
+    ...styleControls('txtFont', 'logoColor', 'txtFx', ['sameStyle', 1]),
+    { type:'spots', key:'spots', label:'Text spots', spots:TEXT_SPOTS },
   ]},
 ];
 
@@ -71,7 +106,9 @@ export const PRESETS = [
 ];
 
 export const DEFAULT = { frame:0, finish:0, rear:0, accent:0, fork:0, uppers:0, spring:0, rims:0, spokes:0, tread:0, rubber:0,
-  grips:0, bar:0, saddle:0, height:0, chain:0, cranks:0, guide:0, pedalsOn:0, pedals:0, logos:0, logoColor:0, name:'' };
+  grips:0, bar:0, saddle:0, height:0, chain:0, cranks:0, guide:0, pedalsOn:0, pedals:0, logos:0, logoColor:0,
+  sameStyle:1, txtFont:0, txtFx:0 };
+for (const s of TEXT_SPOTS) Object.assign(DEFAULT, { [s.key]:'', [s.id+'Case']:0, [s.id+'Font']:0, [s.id+'Col']:0, [s.id+'Fx']:0 });
 
 /* ============ camera views (meters, bike faces +X, drive side +Z) ============ */
 export const VIEWS = {
@@ -86,6 +123,14 @@ export const VIEWS = {
   saddle:  { cam:[-1.05,1.3,1.2],  tgt:[-.31,.9,0] },
   drive:   { cam:[-.75,.62,1.55],  tgt:[-.36,.36,.06] },
   pedals:  { cam:[.35,.66,1.45],   tgt:[-.18,.36,.08] },
+  // text spots
+  downtube:  { cam:[.5,.85,1.45],   tgt:[.13,.71,0] },
+  tire:      { cam:[.95,.5,1.95],   tgt:[.63,.37,0] },
+  forkLow:   { cam:[1.05,.68,1.05], tgt:[.5,.5,.05] },
+  shockLogo: { cam:[-.05,.66,.75],  tgt:[-.09,.52,0] },
+  cranks:    { cam:[-.02,.5,.82],   tgt:[-.12,.35,.08] },
+  brakes:    { cam:[.85,1.28,.72],  tgt:[.31,1.04,.12] },
+  derailleur:{ cam:[-.42,.45,.78],  tgt:[-.59,.31,.12] },
 };
 
 /* ============ mesh → slot mapping ============ */

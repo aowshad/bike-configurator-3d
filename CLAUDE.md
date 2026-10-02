@@ -46,7 +46,7 @@ Keep it that way unless the roadmap item says otherwise.
 
 ## How things work (short)
 
-- **State** is a flat object of option indexes, plus `height` (a number) and `name` (a string). Values that differ from `DEFAULT` are written to the URL hash. That is what the Share button copies.
+- **State** is a flat object of option indexes, plus `height` (a number) and the text spot strings (`name` for the down tube, `<spot>Txt` for the rest). Values that differ from `DEFAULT` are written to the URL hash. That is what the Share button copies.
 - **Slots:** every mesh primitive in the GLB is mapped by `node/material` name to a slot such as `frame`, `rear`, `accent` or `tires` (`slotFor()` in `config.js`). Each slot has one shared `MeshPhysicalMaterial` in `main.js` (`M.*`). Changing a color animates that material.
 - **`applyState()`** in `main.js` turns the state into material colors and finishes, part visibility (tire swap, chain guide, pedals), the saddle offset and stickers. Add new behavior there.
 - **Click on bike:** a raycast finds the mesh, reads its slot from `SLOT_SECTION`, and opens that panel section. The camera then flies to `VIEWS[section.focus]`.
@@ -58,6 +58,8 @@ Keep it that way unless the roadmap item says otherwise.
 3. **Shader recompiles stall for about 1 second.** Don't set `material.needsUpdate` unless a texture or define really changes. Keep `iridescence` at `.0001` and `clearcoat` at `.001` instead of 0, so switching options never recompiles. `renderer.compileAsync()` runs before the loader hides.
 4. **Orientation:** the GLB is Y-up with forward = −Z. The root is rotated `-π/2` around Y, so in world space the bike faces **+X** and its **drive side faces +Z** (toward the default camera). The units are meters, and the ground is y = 0.
 5. Decal PNGs are black on transparent. `whiteAlpha()` turns them white so a material color can tint them.
+   Custom text uses its own canvas per decal mesh (`TextDecal`), mapped onto the mesh's UV rectangle with texture offset/repeat.
+   `document.fonts.check()` can say true before a Google font has loaded; track readiness from `document.fonts.load()` instead.
 6. The Blender materials are procedural and do not export. Detail comes from geometry plus the small generated normal maps (`flake`, `grain`). Baked textures are on the roadmap.
 
 ## Verify every change
