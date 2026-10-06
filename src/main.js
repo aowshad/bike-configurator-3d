@@ -6,6 +6,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 import { BASE_PRICE, OIL, PAINT, ANO, SECTIONS, PRESETS, DEFAULT, VIEWS, slotFor, SLOT_SECTION, SLOT_LABEL, FINISH,
   SECTION_ICONS, FONTS, TEXT_SPOTS, TEXT_PRICE, TEXT_PRICE_MAX, TEXT_CHARS, BAR_RISE, BAR_WIDTH, SADDLE_SHAPES, RIM_DEPTHS, SPOKE_SHAPES, PEDAL_STYLES } from './config.js';
+import { initPerf } from './perf.js';
 import { patchFrame, patchTires, patchGrips, patchSaddle, makeTires, Deformer, pieces, GRIP_TEX, SADDLE_TEX, SADDLE_PARAMS } from './looks.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -41,6 +42,7 @@ controls.enableDamping = true; controls.dampingFactor = 0.08; controls.enablePan
 controls.minDistance = 0.45; controls.maxDistance = 6; controls.maxPolarAngle = THREE.MathUtils.degToRad(86);
 controls.autoRotateSpeed = 0.7;
 
+const perfTick = initPerf(renderer, scene, camera);
 const sun = new THREE.DirectionalLight(0xffffff, 1.7);
 sun.position.set(1.5, 4, 2.4); sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -67,9 +69,10 @@ const easeInOut = t => t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
 /* ============ materials ============ */
 const phys = o => new THREE.MeshPhysicalMaterial(o);
 // procedural detail textures (the Blender procedural shaders don't survive export)
-function noiseNormal(size=256, strength=1.2){
+// seeded, so every load renders the same pixels (lets before/after screenshots be diffed)
+function noiseNormal(size=256, strength=1.2, seed=1){
   const c = document.createElement('canvas'); c.width = c.height = size; const g = c.getContext('2d');
-  const h = new Float32Array(size*size); for (let i=0;i<h.length;i++) h[i] = Math.random();
+  const h = new Float32Array(size*size); for (let i=0;i<h.length;i++) h[i] = (seed = (seed * 16807) % 2147483647) / 2147483647;
   const im = g.createImageData(size,size);
   for (let y=0;y<size;y++) for (let x=0;x<size;x++){
     const i=y*size+x, dx=(h[y*size+(x+1)%size]-h[i])*strength, dy=(h[((y+1)%size)*size+x]-h[i])*strength;
@@ -77,8 +80,8 @@ function noiseNormal(size=256, strength=1.2){
   }
   g.putImageData(im,0,0); const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
 }
-const flake = noiseNormal(256, 1.6); flake.repeat.set(40, 40);
-const grain = noiseNormal(256, .7); grain.repeat.set(10, 10);
+const flake = noiseNormal(256, 1.6, 7); flake.repeat.set(40, 40);
+const grain = noiseNormal(256, .7, 11); grain.repeat.set(10, 10);
 
 const M = {
   frame:   phys({ color:'#5B6067', roughness:.3, metalness:.15, clearcoat:1, clearcoatRoughness:.05, normalMap:flake, normalScale:new THREE.Vector2(0,0) }),
@@ -337,7 +340,7 @@ loader.load('assets/models/bike.glb', gltf => {
   document.getElementById('loadTxt').textContent = 'Preparing materials…';
   // warm every look's deformation targets now, so rendering its thumbnail never computes geometry mid-frame
   for (const s of [state, ...PRESETS.map(p => ({ ...DEFAULT, ...p.c }))]) { const dp = deformParams(s); for (const k in deform) deform[k].warm(dp[k]); }
-  const ready = () => { sectionMats(); applyState(true); document.getElementById('loader').classList.add('done'); flyTo('overview'); modelReady = true; queueThumbs(); };
+  const ready = () => { sectionMats(); applyState(true); document.getElementById('loader').classList.add('done'); performance.mark('first-visual'); performance.mark('interactive'); flyTo('overview'); modelReady = true; queueThumbs(); };
   (renderer.compileAsync ? renderer.compileAsync(scene, camera) : Promise.resolve()).then(ready, ready);
 }, e => {
   if (!e.total) return;
@@ -581,7 +584,7 @@ renderer.setAnimationLoop(now => {
   for (const d of Object.values(deform)) d.step(now);
   controls.update();
   thumbStep(now);   // draws into a corner of the canvas; the full render below paints over it in the same frame
-  renderer.render(scene, camera);
+  const r0 = performance.now(); renderer.render(scene, camera); perfTick(r0, performance.now());
 });
 
 /* ============ look thumbnails ============ */

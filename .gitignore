@@ -7,3 +7,4 @@ node_modules/
 *.zip
 tools/model-pipeline/*.glb
 tools/model-pipeline/textures/
+tools/perf/out/

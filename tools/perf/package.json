@@ -1,0 +1,8 @@
+{
+  "name": "bike-perf-bench",
+  "private": true,
+  "type": "module",
+  "description": "Repeatable performance scenarios for docs/PERF.md (headless Chrome via playwright-core)",
+  "scripts": { "bench": "node bench.mjs" },
+  "dependencies": { "playwright-core": "^1.55.0" }
+}
