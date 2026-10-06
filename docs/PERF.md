@@ -179,7 +179,7 @@ See the before/after screenshots at the end of this page.
 
 ## Phase 4: low-end quality mode
 
-- **Quality: Auto / High / Fast** in the toolbar (gauge icon), saved in `localStorage` (`dh-quality`).
+- **Quality: Auto / High / Fast** in the top bar's camera controls (gauge icon), saved in `localStorage` (`dh-quality`).
 - **Auto** scores the device (`lowEndScore()` in `src/quality.js`): `navigator.deviceMemory` (≤ 2 GB: 2 points, ≤ 4 GB: 1),
   `hardwareConcurrency` (≤ 2 cores: 2, ≤ 4: 1), `prefers-reduced-motion` (1) and a probe of five synced frames of the light
   model at DPR 1 (> 14 ms: 2, > 9 ms: 1). Fast needs 3 points, so no single signal decides it (reduced motion alone is an

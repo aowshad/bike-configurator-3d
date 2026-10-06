@@ -3,6 +3,8 @@
 // Edit this file to add colors, options or parts; main.js reads it.
 
 export const BASE_PRICE = 4499;
+// true: the top bar's main button is "Add to cart" (a store integration handles it). false (the demo): it is "Share build".
+export const SHOW_CART = false;
 export const OIL = 'conic-gradient(from 200deg,#6a5acd,#2bb3a3,#d4b13c,#c2457a,#6a5acd)';
 
 /* ============ options ============ */
@@ -203,7 +205,7 @@ export const SECTION_ICONS = {
 
 /* ============ camera views (meters, bike faces +X, drive side +Z) ============ */
 export const VIEWS = {
-  overview:{ cam:[1.5,1.08,3.0], tgt:[0,.52,0] },
+  overview:{ cam:[1.6,1.08,2.95], tgt:[.1,.52,-.05] },   // panned 11 cm right: the near front wheel looks bigger, this re-centers the bike
   side:    { cam:[0,.6,4.3],       tgt:[0,.52,0] },
   frame:   { cam:[.85,1.05,2.75],  tgt:[0,.62,0] },
   rear:    { cam:[-1.1,.95,1.95],  tgt:[-.35,.52,0] },

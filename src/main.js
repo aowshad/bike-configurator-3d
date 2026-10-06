@@ -5,7 +5,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-import { BASE_PRICE, OIL, PAINT, ANO, SECTIONS, PRESETS, DEFAULT, VIEWS, slotFor, SLOT_SECTION, SLOT_LABEL, FINISH,
+import { BASE_PRICE, SHOW_CART, OIL, PAINT, ANO, SECTIONS, PRESETS, DEFAULT, VIEWS, slotFor, SLOT_SECTION, SLOT_LABEL, FINISH,
   SECTION_ICONS, FONTS, TEXT_SPOTS, TEXT_PRICE, TEXT_PRICE_MAX, TEXT_CHARS, BAR_RISE, BAR_WIDTH, SADDLE_SHAPES, RIM_DEPTHS, SPOKE_SHAPES, PEDAL_STYLES } from './config.js';
 import { initPerf } from './perf.js';
 import { Resolution, savedQuality, saveQuality, lowEndScore, probeFrame } from './quality.js';
@@ -734,7 +734,11 @@ function drawTexts(){
 function resize(){
   const r = stage.getBoundingClientRect();
   renderer.setSize(r.width, r.height, false);
-  camera.aspect = r.width / r.height; camera.fov = camera.aspect < .9 ? 42 : 30; camera.updateProjectionMatrix();
+  camera.aspect = r.width / r.height; camera.fov = camera.aspect < .9 ? 42 : 30;
+  // phones: the camera buttons stack on the stage's right edge, so center the view in the space left of them
+  const tb = document.getElementById('toolbar'), shift = tb.parentNode === stage ? (tb.offsetWidth + 12) / 2 : 0;
+  if (shift) camera.setViewOffset(r.width, r.height, shift, 0, r.width, r.height); else camera.clearViewOffset();
+  camera.updateProjectionMatrix();
   // resizing clears the canvas, and ResizeObserver runs after this frame's rAF: render now so nothing flashes
   if (frameReq) { cancelAnimationFrame(frameReq); frameReq = 0; }
   frame(performance.now());
@@ -1042,6 +1046,16 @@ function highlight(id){
     }, false, HL.in);
   }
 }
+// option list: fade its top and bottom edges only while there is more to scroll that way
+const secList = document.getElementById('sections');
+function syncFade(){
+  const more = secList.scrollHeight - secList.clientHeight - secList.scrollTop;
+  secList.classList.toggle('fadeT', secList.scrollTop > 1);
+  secList.classList.toggle('fadeB', more > 1);
+}
+secList.addEventListener('scroll', syncFade, { passive: true });
+const fadeRO = new ResizeObserver(syncFade);
+fadeRO.observe(secList); secList.querySelectorAll('.sec').forEach(el => fadeRO.observe(el));
 // the last pointer decides hover vs touch (media queries misreport on hybrid and emulated devices)
 let lastPointer = 'mouse', hlOnce;
 addEventListener('pointerdown', e => { lastPointer = e.pointerType; }, true);
@@ -1279,11 +1293,20 @@ function toast(m, action, fn){
   t.classList.add('on'); t.classList.toggle('act', !!action);
   clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on', 'act'), action ? 6000 : 2000);
 }
-document.getElementById('shareBtn').onclick = async () => {
+// top bar: the main button adds to cart when SHOW_CART is on; otherwise it shares the build (the Share icon would repeat it)
+const shareBtn = document.getElementById('shareBtn'), mainBtn = document.getElementById('mainBtn');
+let shareT;
+async function share(){
   writeHash(); try { await navigator.clipboard.writeText(location.href); } catch(e) {}
-  const l = document.getElementById('shareLbl'); l.textContent = 'Link copied'; toast('Link to this build copied'); setTimeout(() => l.textContent = 'Share', 1500);
-};
-document.getElementById('cartBtn').onclick = () => toast(`Demo only · ${document.getElementById('total').textContent} build added to cart`);
+  toast('Link to this build copied');
+  if (SHOW_CART) return;
+  mainBtn.textContent = 'Link copied'; clearTimeout(shareT); shareT = setTimeout(() => mainBtn.textContent = 'Share build', 1500);
+}
+shareBtn.onclick = share;
+shareBtn.hidden = !SHOW_CART;
+mainBtn.textContent = SHOW_CART ? 'Add to cart' : 'Share build';
+mainBtn.title = SHOW_CART ? '' : 'Copy a link to this build';
+mainBtn.onclick = SHOW_CART ? () => toast(`Demo only · ${document.getElementById('total').textContent} build added to cart`) : share;
 document.getElementById('shotBtn').onclick = () => {
   renderer.render(scene, camera);
   const a = document.createElement('a'); a.download = 'gravity-dh-build.png'; a.href = renderer.domElement.toDataURL('image/png'); a.click(); toast('Image saved');

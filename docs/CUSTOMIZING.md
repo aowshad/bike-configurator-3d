@@ -46,4 +46,5 @@ Push `{ name, desc, c:{ key:index, … } }` to `PRESETS`. Keys you leave out fal
 
 ## Change prices
 - Base price: `BASE_PRICE`.
+- Cart: `SHOW_CART` (default `false`). When on, the top bar's main button is "Add to cart" and a Share icon sits beside it; when off (the demo), the main button is "Share build".
 - Option prices: the price field of each option (see the table in ARCHITECTURE.md).

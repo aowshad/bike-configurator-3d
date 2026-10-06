@@ -67,9 +67,12 @@ Keep it that way unless the roadmap item says otherwise.
 
 ## How things work (short)
 
-- **State** is a flat object of option indexes, plus `height` (a number) and the text spot strings (`name` for the down tube, `<spot>Txt` for the rest). Values that differ from `DEFAULT` are written to the URL hash. That is what the Share button copies.
+- **State** is a flat object of option indexes, plus `height` (a number) and the text spot strings (`name` for the down tube, `<spot>Txt` for the rest). Values that differ from `DEFAULT` are written to the URL hash. That is what Share copies (the top bar's "Share build" button, or its Share icon when `SHOW_CART` is on).
 - **Slots:** every mesh primitive in the GLB is mapped by `node/material` name to a slot such as `frame`, `rear`, `accent` or `tires` (`slotFor()` in `config.js`). Each slot has one shared material in `main.js` (`M.*`): `MeshPhysicalMaterial` only where clearcoat, iridescence or sheen shows, `MeshStandardMaterial` elsewhere. Changing a color animates that material.
 - **`applyState()`** in `main.js` turns the state into material colors and finishes, part visibility (tire swap, chain guide, pedals), the saddle offset and stickers. Add new behavior there.
+- **Layout:** a top bar (name, camera controls, price, main button) above the stage and the panel. Below 900px the camera
+  controls move onto the stage as a vertical stack (inline script in `index.html`), and `resize()` offsets the camera view
+  so the bike centers in the space left of them. The option list scrolls with edge fades (`syncFade()` in `main.js`).
 - **Click on bike:** a raycast finds the mesh, reads its slot from `SLOT_SECTION`, and opens that panel section. The camera then flies to `VIEWS[section.focus]`.
 
 ## Gotchas (each one cost time already)
