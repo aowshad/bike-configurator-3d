@@ -24,7 +24,7 @@ async function open({ w = 1440, h = 900, dpr = 2, mobile = false, theme = 'light
   const errors = [];
   p.on('pageerror', e => errors.push(e.message));
   p.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
-  await p.addInitScript(t => { try { localStorage.setItem('dh-theme', t); } catch (e) {} }, theme);
+  await p.addInitScript(([t, q]) => { try { localStorage.setItem('dh-theme', t); if (q) localStorage.setItem('dh-quality', q); } catch (e) {} }, [theme, opt('quality')]);
   return { ctx, p, errors };
 }
 // loader hidden, look thumbnails done, and (when the page has LODs) the detailed model swapped in

@@ -8,7 +8,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BASE_PRICE, OIL, PAINT, ANO, SECTIONS, PRESETS, DEFAULT, VIEWS, slotFor, SLOT_SECTION, SLOT_LABEL, FINISH,
   SECTION_ICONS, FONTS, TEXT_SPOTS, TEXT_PRICE, TEXT_PRICE_MAX, TEXT_CHARS, BAR_RISE, BAR_WIDTH, SADDLE_SHAPES, RIM_DEPTHS, SPOKE_SHAPES, PEDAL_STYLES } from './config.js';
 import { initPerf } from './perf.js';
-import { Resolution } from './quality.js';
+import { Resolution, savedQuality, saveQuality, lowEndScore, probeFrame } from './quality.js';
 import { patchFrame, patchTires, patchGrips, patchSaddle, makeTires, Deformer, pieces, GRIP_TEX, SADDLE_TEX, SADDLE_PARAMS } from './looks.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -31,7 +31,8 @@ const stage = document.getElementById('stage');
 // preserveDrawingBuffer stays off: the image button and look thumbnails read the canvas in the same task they render it
 const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
 const coarse = matchMedia('(pointer: coarse)').matches;
-const res = new Resolution(renderer, { rest: Math.min(devicePixelRatio, 2), cap: coarse ? 1.25 : 1.5, input: 1 });
+const RES_HIGH = { rest: Math.min(devicePixelRatio, 2), cap: coarse ? 1.25 : 1.5, input: 1 }, RES_FAST = { rest: 1, cap: 1, input: 1 };
+const res = new Resolution(renderer, RES_HIGH);
 renderer.setPixelRatio(res.rest);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NeutralToneMapping;
@@ -62,6 +63,13 @@ scene.add(sun);
 const back = new THREE.DirectionalLight(0xffffff, .6); back.position.set(-2.5, 2, -2); scene.add(back);
 const ground = new THREE.Mesh(new THREE.CircleGeometry(3.4, 64), new THREE.ShadowMaterial({ opacity:.22 }));
 ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
+// Fast mode's ground shadow: a soft contact shadow baked from the real one (tools/perf/poster.mjs), no shadow map at all.
+// CONTACT is the ground area the texture covers (meters); the poster script captures exactly this rectangle.
+const CONTACT = { x0: -1.6, x1: 1.4, z0: -1.3, z1: .6 };
+const contact = new THREE.Mesh(new THREE.PlaneGeometry(CONTACT.x1 - CONTACT.x0, CONTACT.z1 - CONTACT.z0),
+  new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, opacity: .22, color: 0xffffff }));
+contact.rotation.x = -Math.PI/2; contact.position.set((CONTACT.x0 + CONTACT.x1) / 2, .001, (CONTACT.z0 + CONTACT.z1) / 2);
+contact.visible = false;   // added to the scene the first time Fast mode turns on
 
 /* ============ camera views (meters, bike faces +X, drive side +Z) ============ */
 let tween = null;
@@ -179,7 +187,7 @@ function whiteAlpha(img){
   g.putImageData(d, 0, 0);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.flipY = false; return t;
 }
-const decalMat = std({ color:'#F4F4F2', roughness:.35, metalness:.05, clearcoat:.6, transparent:true, alphaTest:.3, polygonOffset:true, polygonOffsetFactor:-4, polygonOffsetUnits:-4 });
+const decalMat = std({ color:'#F4F4F2', roughness:.35, metalness:.05, transparent:true, alphaTest:.3, polygonOffset:true, polygonOffsetFactor:-4, polygonOffsetUnits:-4 });
 
 /* ============ text decals ============ */
 // Every decal mesh gets its own canvas, sized to the part of the original image its UVs use.
@@ -436,8 +444,16 @@ loader.load(glbParam || LOD_URL.low, gltf => {
   warmDeforms(low);
   // compileAsync covers the main pass only: one render with every variant visible also compiles the shadow-pass
   // programs (e.g. the instanced mud-spike knobs). Same task as applyState below, so this frame is never shown.
-  const ready = () => {
+  const ready = async () => {
     renderer.shadowMap.needsUpdate = true; renderer.render(scene, camera); sectionMats(); applyState(true);
+    // Auto quality: a short probe of the light model at DPR 1 decides with the device signals (quality.js)
+    if (quality === 'auto' && !fastOn) {
+      const was = renderer.getPixelRatio(); renderer.setPixelRatio(1);
+      const ms = probeFrame(() => renderer.render(scene, camera), renderer.getContext());
+      renderer.setPixelRatio(was);
+      autoFast = lowEndScore(ms) >= 3;
+      if (autoFast) await setFast(true);
+    }
     // start exactly where the poster was rendered, then cross-fade the poster away
     flyTo('overview', true); frame(performance.now());
     document.getElementById('loader').classList.add('done'); document.getElementById('poster')?.classList.add('gone');
@@ -445,9 +461,12 @@ loader.load(glbParam || LOD_URL.low, gltf => {
     performance.mark('interactive');
     modelReady = true; queueThumbs();
     // data-lod: light → detail once the at-rest model is in; 'single' when only one file loads (tools)
-    document.documentElement.dataset.lod = glbParam ? 'single' : 'light';
-    if (!glbParam) loadDetail();
+    document.documentElement.dataset.lod = glbParam ? 'single' : fastOn ? 'light-only' : 'light';
+    if (!glbParam && !fastOn) loadDetail();
+    syncQualityUI();
   };
+  // devices that are clearly low-end start in Fast before anything compiles, so they compile one shader set only
+  if (quality === 'fast' || (quality === 'auto' && lowEndScore() >= 3)) { if (quality === 'auto') autoFast = true; setFast(true, { compile: false }); }
   (renderer.compileAsync ? renderer.compileAsync(scene, camera) : Promise.resolve()).then(ready, ready);
 }, e => {
   if (!e.total) return;
@@ -457,13 +476,15 @@ loader.load(glbParam || LOD_URL.low, gltf => {
 }, err => { document.getElementById('loadTxt').textContent = 'Could not load the 3D model.'; console.error(err); });
 
 // the at-rest model: parsed in workers, built in idle time, uploaded in a hidden 1×1 render, then swapped in at rest
-let pendingUpload = null;
+let pendingUpload = null, detailLoading = false;
 function loadDetail(){
+  if (detailLoading || detail) return; detailLoading = true;
   loader.load(LOD_URL.detail, async gltf => {
     await idle();
     const m = buildModel(gltf, 'detail'); m.root.visible = false;
     await idle(); warmDeforms(m);
     await idle(); syncModel(m, true);
+    if (twins && fastOn) m.root.traverse(o => { if (o.isMesh && twins.has(o.material)) o.material = twins.get(o.material); });
     pendingUpload = m; requestRender();   // frame() uploads it, then picks it at the next rest frame
   }, undefined, err => console.warn('Detailed model not loaded, staying on the light one.', err));
 }
@@ -739,7 +760,8 @@ function frame(now){
   for (const m of models) for (const k in m.deform) if (m.deform[k].step(now)) deforming = true;
   if (controls.update()) cameraMoving = true;   // true while damping or auto-rotate moves the camera
   if (controls.autoRotate) cameraMoving = true;
-  if (!stageVisible || document.hidden) return;
+  if (!stageVisible || document.hidden || holdRender) return;   // holdRender: a quality switch is compiling its shaders
+  if (twins && fastOn) syncTwins();
   // resolution: full at rest, capped while the camera moves, 1.0 while the user drags or zooms. A click that doesn't
   // move the camera keeps full resolution, and the moving resolution is held for 200 ms so quick drags don't thrash.
   if (cameraMoving) lastMove = now;
@@ -751,7 +773,7 @@ function frame(now){
   // LOD: the detailed model at rest, the light one while the user drags (and while the camera moves on touch devices)
   if (pendingUpload) { uploadModel(pendingUpload); detail = pendingUpload; pendingUpload = null; }
   if (mode && detail) {
-    const want = mode === 'input' || (coarse && mode === 'move') ? low : detail;
+    const want = fastOn || mode === 'input' || (coarse && mode === 'move') ? low : detail;
     if (want === detail && !detail.shown) {   // first time: its silhouette replaces the light model's in the shadow map
       detail.shown = true; shadowDirty = true; document.documentElement.dataset.lod = 'detail'; performance.mark('detail');
     }
@@ -782,6 +804,58 @@ renderer.domElement.addEventListener('wheel', () => { interactUntil = performanc
 // pause while the tab is hidden or the stage is scrolled out of view
 document.addEventListener('visibilitychange', () => { if (!document.hidden) requestRender(); });
 new IntersectionObserver(([e]) => { stageVisible = e.isIntersecting; if (stageVisible) requestRender(); }).observe(stage);
+
+/* ============ quality mode: Auto / High / Fast ============ */
+// Fast: the light model only, DPR 1, standard materials, no shadow map (a baked contact shadow instead), no auto-rotate.
+// Auto picks Fast on low-end devices (quality.js). Switching compiles the other shader set with compileAsync while the
+// last frame stays on screen, so a switch never stalls; the choice is saved in localStorage.
+let quality = savedQuality(), fastOn = false, autoFast = null, holdRender = false, twins = null;
+const PHYS_KEYS = ['frame', 'rear', 'accent', 'forkLow', 'forkUp', 'spring', 'saddle', 'chain', 'nipples'];
+// standard twins of the physical materials; they share the shader-patch uniforms and copy animated values each frame
+function makeTwins(){
+  twins = new Map();
+  for (const k of PHYS_KEYS) {
+    const m = M[k];
+    twins.set(m, new THREE.MeshStandardMaterial({ color: m.color, roughness: m.roughness, metalness: m.metalness,
+      normalMap: m.normalMap, normalScale: m.normalScale.clone(), vertexColors: m.vertexColors }));
+  }
+  patchFrame([twins.get(M.frame), twins.get(M.rear)], U.frame);
+  patchSaddle(twins.get(M.saddle), U.saddle);
+}
+function syncTwins(){
+  for (const [m, t] of twins) {
+    t.color.copy(m.color); t.emissive.copy(m.emissive); t.normalScale.copy(m.normalScale);
+    t.emissiveIntensity = m.emissiveIntensity; t.roughness = m.roughness; t.metalness = m.metalness;
+  }
+}
+async function setFast(on, { compile = true } = {}){
+  if (on === fastOn) return;
+  fastOn = on;
+  if (on && !twins) makeTwins();
+  const swap = new Map(on ? twins : [...twins].map(([a, b]) => [b, a]));
+  scene.traverse(o => { if (o.isMesh && swap.has(o.material)) o.material = swap.get(o.material); });
+  renderer.shadowMap.enabled = !on; ground.visible = !on; contact.visible = on;
+  if (on && !contact.parent) scene.add(contact);
+  if (on && !contact.material.map) contact.material.map = new THREE.TextureLoader().load('assets/poster/contact-shadow.webp', () => requestRender());
+  res.configure(on ? RES_FAST : RES_HIGH);
+  if (on && controls.autoRotate) spinBtn.click();
+  spinBtn.disabled = on;
+  if (on) { if (low) showModel(low); if (modelReady) document.documentElement.dataset.lod = 'light-only'; }
+  else if (modelReady && !glbParam) { if (detail) detail.shown = false; else loadDetail(); document.documentElement.dataset.lod = 'light'; }
+  shadowDirty = true; syncTwins();
+  if (compile && low) { holdRender = true; await compileVariants(); holdRender = false; }
+  syncQualityUI(); requestRender();
+}
+// compile every variant (hidden tires, collars, guide, pedals) for the current mode, then restore the build's visibility
+async function compileVariants(){
+  const list = [...treads.slice(1).flat(), ...models.flatMap(m => [...m.knobby, ...m.collars.inner, ...m.collars.outer, m.nodes.Guard, m.nodes.Pedals])].filter(Boolean);
+  const roots = models.map(m => m.root.visible);
+  list.forEach(o => o.visible = true); models.forEach(m => m.root.visible = !fastOn || m === low);
+  try { await renderer.compileAsync(scene, camera); } catch (e) {}
+  models.forEach((m, i) => m.root.visible = roots[i]);
+  treads.forEach((l, i) => { if (i) l.forEach(t => t.visible = i === state.tread); });
+  models.forEach(m => syncModel(m, true));
+}
 
 /* ============ look thumbnails ============ */
 // Each look is rendered once with the main renderer into a scissored corner of the canvas, copied out, and cached
@@ -1160,6 +1234,35 @@ document.addEventListener('keydown', e => {
 });
 
 const spinBtn = document.getElementById('spinBtn');
+// quality menu
+const qBtn = document.getElementById('qualityBtn'), qMenu = document.getElementById('qualityMenu');
+const Q_LABEL = { auto: 'Auto', high: 'High', fast: 'Fast' };
+function syncQualityUI(){
+  document.getElementById('qualityLbl').textContent = Q_LABEL[quality];
+  qBtn.title = `Quality: ${Q_LABEL[quality]}` + (quality === 'auto' ? ` (${fastOn ? 'Fast' : 'High'} on this device)` : '');
+  const autoPick = autoFast ?? lowEndScore() >= 3;
+  document.getElementById('qAutoNote').textContent = `Picks for this device · ${autoPick ? 'Fast' : 'High'} here`;
+  qMenu.querySelectorAll('[data-q]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.q === quality)));
+}
+function openQuality(open){
+  qMenu.hidden = !open; qBtn.setAttribute('aria-expanded', String(open));
+  if (open) qMenu.querySelector('[aria-checked="true"]')?.focus();
+}
+qBtn.addEventListener('click', e => { e.stopPropagation(); openQuality(qMenu.hidden); });
+qMenu.addEventListener('click', async e => {
+  const b = e.target.closest('[data-q]'); if (!b) return;
+  quality = b.dataset.q; saveQuality(quality); openQuality(false); qBtn.focus();
+  autoFast ??= lowEndScore() >= 3;
+  await setFast(quality === 'fast' || (quality === 'auto' && autoFast));
+  syncQualityUI();
+});
+qMenu.addEventListener('keydown', e => {
+  const items = [...qMenu.querySelectorAll('[data-q]')], i = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { openQuality(false); qBtn.focus(); e.preventDefault(); }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); e.preventDefault(); }
+});
+document.addEventListener('click', e => { if (!qMenu.hidden && !e.target.closest('.qwrap')) openQuality(false); });
+syncQualityUI();
 spinBtn.onclick = () => { controls.autoRotate = !controls.autoRotate; requestRender(); spinBtn.classList.toggle('on', controls.autoRotate); spinBtn.setAttribute('aria-pressed', controls.autoRotate); };
 let toastT;
 function toast(m, action, fn){
@@ -1181,7 +1284,7 @@ document.getElementById('shotBtn').onclick = () => {
   renderer.render(scene, camera);
   const a = document.createElement('a'); a.download = 'gravity-dh-build.png'; a.href = renderer.domElement.toDataURL('image/png'); a.click(); toast('Image saved');
 };
-function syncGround(){ const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; ground.material.opacity = dark ? .5 : .22; requestRender(); }
+function syncGround(){ const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; ground.material.opacity = contact.material.opacity = dark ? .5 : .22; requestRender(); }
 document.getElementById('themeBtn').onclick = () => {
   const r = document.documentElement;
   const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;

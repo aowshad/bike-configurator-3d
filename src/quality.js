@@ -12,6 +12,7 @@ export class Resolution {
     this.ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
     this.queries = []; this.active = null;
   }
+  configure({ rest, cap, input }){ this.rest = rest; this.cap = Math.min(cap, rest); this.input = Math.min(input, rest); this.scale = 1; }
   // the pixel ratio for this frame: 'rest', 'move' (camera moving) or 'input' (dragging, zooming)
   target(mode){
     if (mode === 'rest') return this.rest;
@@ -57,4 +58,30 @@ export class Resolution {
     else if (this.cost < fastLimit) { this.slow = 0; if (++this.fast >= 30) { this.scale = Math.min(1, this.scale / .85); this.fast = 0; } }
     else { this.slow = 0; this.fast = 0; }
   }
+}
+
+/* ============ quality mode: Auto / High / Fast ============ */
+export const QUALITY_MODES = ['auto', 'high', 'fast'];
+export function savedQuality(){
+  try { const q = localStorage.getItem('dh-quality'); return QUALITY_MODES.includes(q) ? q : 'auto'; } catch (e) { return 'auto'; }
+}
+export function saveQuality(q){ try { localStorage.setItem('dh-quality', q); } catch (e) {} }
+
+// Low-end score. Each signal alone is weak (reduced motion is an accessibility choice, not a slow device), so Fast needs
+// several: score ≥ 3. `probeMs` is the cost of a synced frame of the light model at DPR 1 (null before it has run).
+export function lowEndScore(probeMs = null){
+  const mem = navigator.deviceMemory, cores = navigator.hardwareConcurrency;
+  let s = 0;
+  if (mem) s += mem <= 2 ? 2 : mem <= 4 ? 1 : 0;
+  if (cores) s += cores <= 2 ? 2 : cores <= 4 ? 1 : 0;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) s += 1;
+  if (probeMs != null) s += probeMs > 14 ? 2 : probeMs > 9 ? 1 : 0;
+  return s;
+}
+// median cost of a few synced frames (CPU + GPU), after a warm-up
+export function probeFrame(render, gl){
+  const px = new Uint8Array(4), sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px), t = [];
+  for (let k = 0; k < 2; k++) { render(); sync(); }
+  for (let k = 0; k < 5; k++) { const t0 = performance.now(); render(); sync(); t.push(performance.now() - t0); }
+  return t.sort((a, b) => a - b)[2];
 }

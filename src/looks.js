@@ -52,8 +52,9 @@ const ab = (a = 0) => ({ value: a });
 
 /* ============ frame paint styles ============ */
 // 0 solid · 1 fade · 2 split · 3 camo · 4 splatter · 5 carbon weave. Shared by the front and rear frame materials.
-export function patchFrame(mats){
-  const u = { uStyleA: ab(), uStyleB: ab(), uStyleT: ab(), uC2: { value: new THREE.Color('#121214') },
+// `shared`: reuse another patch's uniforms (the Fast-mode twin materials follow the same values)
+export function patchFrame(mats, shared){
+  const u = shared || { uStyleA: ab(), uStyleB: ab(), uStyleT: ab(), uC2: { value: new THREE.Color('#121214') },
     uScale: ab(4), uAngle: ab(60 * Math.PI / 180), uFade: ab(.8) };
   const frag = `
   // splats are sprayed from the side, so they live in the side-view plane (x, y); edges broken up with noise
@@ -213,8 +214,8 @@ export function patchGrips(mat, axis){
 }
 
 /* ============ saddle cover (triplanar) ============ */
-export function patchSaddle(mat){
-  const u = { uCovA: { value: SADDLE_TEX[0] }, uCovB: { value: SADDLE_TEX[0] }, uCovT: ab(),
+export function patchSaddle(mat, shared){
+  const u = shared || { uCovA: { value: SADDLE_TEX[0] }, uCovB: { value: SADDLE_TEX[0] }, uCovT: ab(),
     uParA: { value: new THREE.Vector3(...SADDLE_PARAMS[0]) }, uParB: { value: new THREE.Vector3(...SADDLE_PARAMS[0]) } };
   const frag = `
   vec4 lk_tri(sampler2D t, vec3 p, vec3 w){

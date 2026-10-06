@@ -4,6 +4,7 @@
 import { chromium } from 'playwright-core';
 const args = process.argv.slice(2), i = args.indexOf('--url');
 const PAGE = i >= 0 ? args[i + 1] : 'http://localhost:5181/';
+const qi = args.indexOf('--quality'), QUALITY = qi >= 0 ? args[qi + 1] : null;   // auto (default), high or fast
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const b = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--use-angle=metal', '--ignore-gpu-blocklist'] });
 const fails = [], ok = (cond, msg) => { if (!cond) fails.push(msg); console.log((cond ? 'ok   ' : 'FAIL ') + msg); };
@@ -11,13 +12,14 @@ const fails = [], ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(
 for (const [w, h, mobile] of [[1440, 900, false], [375, 812, true]]) {
   const ctx = await b.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 2, isMobile: mobile, hasTouch: mobile });
   const p = await ctx.newPage(), errors = [];
-  p.on('pageerror', e => errors.push(e.message)); p.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  if (QUALITY) await p.addInitScript(q => localStorage.setItem('dh-quality', q), QUALITY);
+  p.on('pageerror', e => errors.push(e.message)); p.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.type() + ': ' + m.text()); });
   await p.goto(PAGE + '?perf&debug');
   await p.waitForSelector('#loader.done', { timeout: 120000 });
   await p.waitForFunction(() => document.querySelectorAll('.look.ready').length === document.querySelectorAll('.look').length, null, { timeout: 60000 });
   await p.waitForFunction(() => ['detail', 'single', 'light-only'].includes(document.documentElement.dataset.lod), null, { timeout: 120000 }).catch(() => {});
   await p.waitForTimeout(2500);
-  const tag = `[${w}]`;
+  const tag = `[${w}${QUALITY ? ' ' + QUALITY : ''}]`;
   const stats = () => p.evaluate(() => window.__perf.stats());
   ok((await stats()).rendersPerSec === 0, `${tag} idle: 0 renders/s`);
   const programs0 = (await stats()).programs;
@@ -32,7 +34,7 @@ for (const [w, h, mobile] of [[1440, 900, false], [375, 812, true]]) {
     await p.waitForTimeout(700);
     const r1 = await renders(); await p.waitForTimeout(600); const r2 = await renders();
     const sh1 = await p.evaluate(() => window.__perf.shadowPasses());
-    const geo = ['tread', 'pedalsOn', 'guide', 'height', 'rise', 'width', 'collars', 'saddleShape', 'rimDepth', 'spokeShape', 'pedalStyle'].some(k => k in patch);
+    const geo = QUALITY !== 'fast' && ['tread', 'pedalsOn', 'guide', 'height', 'rise', 'width', 'collars', 'saddleShape', 'rimDepth', 'spokeShape', 'pedalStyle'].some(k => k in patch);
     const pr = (await stats()).programs; if (pr !== programs0) console.log('     programs now', pr, 'after', JSON.stringify(patch));
     ok(r1 > r0 && r2 === r1 && (!geo || sh1 > sh0), `${tag} ${JSON.stringify(patch)}: rendered ${r1 - r0}×, then stopped${geo ? `, shadow passes +${sh1 - sh0}` : ''}`);
   }

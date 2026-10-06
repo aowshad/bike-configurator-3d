@@ -153,3 +153,26 @@ it is slightly softer until the cross-fade.
 | Frame cost at rest, DPR 2 | 9.4 ms | 8.1–9.3 ms | 7.4–7.9 ms |
 | Frame cost while dragging | 9.4 ms | 3.0–3.6 ms | 3.1 ms |
 | At-rest pixels changed vs baseline | | 0.4–0.9% | 0.4–0.9% (unchanged by this phase) |
+
+## Phase 4: low-end quality mode
+
+- **Quality: Auto / High / Fast** in the toolbar (gauge icon), saved in `localStorage` (`dh-quality`).
+- **Auto** scores the device (`lowEndScore()` in `src/quality.js`): `navigator.deviceMemory` (≤ 2 GB: 2 points, ≤ 4 GB: 1),
+  `hardwareConcurrency` (≤ 2 cores: 2, ≤ 4: 1), `prefers-reduced-motion` (1) and a probe of five synced frames of the light
+  model at DPR 1 (> 14 ms: 2, > 9 ms: 1). Fast needs 3 points, so no single signal decides it (reduced motion alone is an
+  accessibility choice, not a slow device). Devices that already score 3 before anything renders start in Fast and compile
+  only the Fast shaders; the probe runs once the light model is ready.
+- **Fast** = the light model only (lod0 is never downloaded), DPR 1, `MeshStandardMaterial` twins of the physical materials
+  (they share the paint and saddle shader uniforms and copy the animated values, so styles, colors and hover glow still
+  work), no shadow map (a soft contact shadow baked from the real one by `tools/perf/poster.mjs` instead), no auto-rotate.
+- Switching modes compiles the other shader set with `compileAsync` while the last frame stays on screen: no long task
+  on any switch (measured High → Fast → High → Fast → Auto). Both shader sets stay cached afterwards.
+
+| Metric | High (Auto on this machine) | Fast |
+|---|---|---|
+| Triangles | 660,847 at rest, 189,551 dragging | 189,489 |
+| Pixel ratio | 2 at rest, 1 dragging | 1 |
+| Shader programs | 13 | 11 |
+| JS heap | 39 MB | 18–31 MB |
+| Frame cost | 7.4–7.9 ms at rest, 3.1 ms dragging | 1.7–3.9 ms |
+| Fast 4G transferred | 5.8 MB (2.3 MB before configurable) | **2.3 MB** total |
