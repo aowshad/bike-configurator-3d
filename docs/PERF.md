@@ -127,3 +127,29 @@ it is slightly softer until the cross-fade.
 |---|---|
 | ![](perf/baseline-overview.webp) | ![](perf/p2-overview.webp) |
 | ![](perf/baseline-downtube.webp) | ![](perf/p2-downtube.webp) |
+
+## Phase 3: cheaper materials and textures
+
+- **Materials.** `MeshPhysicalMaterial` stays only where a physical feature shows: frame and rear paint (clearcoat, paint
+  styles), anodized parts, nipples and chain (iridescence), saddle (sheen), and the fork lowers, fork uppers and shock
+  spring (clearcoat; turning it off changed 1–4% of pixels, the fork visibly lost its gloss). The other 16 materials and the
+  decals are `MeshStandardMaterial` (0 pixels changed for the 16, ≤ 0.02% for the decals).
+- **Programs:** the environment map's generator and room scene are disposed after use, which frees their programs.
+  Shader programs 17 → **13**; no option compiles a new one (`check.mjs`).
+- **Generated textures:** text canvases are 512 px on the long side (were 1024), anisotropy 4 (was 8) everywhere.
+  Decals of the same spot that would draw an identical canvas share it, and decals that use the same logo image share one
+  white-logo texture; the glTF's own decal bitmaps are closed once copied. Uploaded textures 56 → **32**.
+  With custom text on six spots, the 512 px text differs from 1024 px in 0.1–0.3% of pixels (edge softness at the
+  closest camera views, not visible side by side).
+- **Look-card thumbnails** render only while the look row is on screen, one per idle callback (each costs a single frame
+  instead of keeping the loop running), from the light model, as WebP, and are cached in `sessionStorage` for the session.
+
+| Metric | Baseline | Phase 2 | Phase 3 |
+|---|---|---|---|
+| Shader programs | 17 | 17 | **13** |
+| Textures | 56 | 56 | **32** |
+| Geometries | 99 | 154 (two LODs) | 142 |
+| JS heap | 59 MB | 42 MB | 39 MB |
+| Frame cost at rest, DPR 2 | 9.4 ms | 8.1–9.3 ms | 7.4–7.9 ms |
+| Frame cost while dragging | 9.4 ms | 3.0–3.6 ms | 3.1 ms |
+| At-rest pixels changed vs baseline | | 0.4–0.9% | 0.4–0.9% (unchanged by this phase) |

@@ -34,10 +34,12 @@ export function initPerf(renderer, scene, camera){
     count: () => count,            // total main renders since load
     shadowPasses: () => shadows,   // total shadow-map updates since load
     // cost of one full frame at the current size: n renders, each waited on
-    bench(n = 30){
-      sync(); const t0 = performance.now();
-      for (let k = 0; k < n; k++) { renderer.render(scene, camera); sync(); }
-      return +((performance.now() - t0) / n).toFixed(2);
+    // median of n synced frames after a warm-up, so GPU clock ramps don't skew it
+    bench(n = 60){
+      for (let k = 0; k < 15; k++) { renderer.render(scene, camera); sync(); }
+      const t = [];
+      for (let k = 0; k < n; k++) { const t0 = performance.now(); renderer.render(scene, camera); sync(); t.push(performance.now() - t0); }
+      t.sort((a, b) => a - b); return +t[n >> 1].toFixed(2);
     },
     // the same at another pixel ratio (e.g. the 1.0 used while dragging), then back
     benchAt(dpr, n = 30){

@@ -164,7 +164,7 @@ function heightTexture(size, draw, strength = 2, blur = 1.2){
   }
   const t = new THREE.DataTexture(data, size, size);
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
-  t.generateMipmaps = true; t.anisotropy = 8; t.needsUpdate = true; return t;
+  t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true; return t;
 }
 const roundRect = (g, x, y, w, h, r) => { g.beginPath(); g.roundRect(x, y, w, h, r); g.fill(); };
 function rng(seed){ return () => (seed = (seed * 16807) % 2147483647) / 2147483647; }

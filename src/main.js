@@ -40,7 +40,11 @@ renderer.shadowMap.autoUpdate = false;   // static shadows: redrawn only when ge
 stage.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+{ // studio lighting: render the room once into an environment map, then free the generator and room (and their programs)
+  const pmrem = new THREE.PMREMGenerator(renderer), room = new RoomEnvironment();
+  scene.environment = pmrem.fromScene(room, 0.04).texture;
+  room.dispose(); pmrem.dispose();
+}
 scene.environmentIntensity = 0.9;
 const camera = new THREE.PerspectiveCamera(30, 1, 0.03, 60);
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -74,7 +78,10 @@ function flyTo(name, instant){
 const easeInOut = t => t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
 
 /* ============ materials ============ */
+// MeshPhysicalMaterial only where its features show (clearcoat paint, iridescent anodizing and chain, saddle sheen);
+// everything else is the cheaper MeshStandardMaterial
 const phys = o => new THREE.MeshPhysicalMaterial(o);
+const std = o => new THREE.MeshStandardMaterial(o);
 // procedural detail textures (the Blender procedural shaders don't survive export)
 // seeded, so every load renders the same pixels (lets before/after screenshots be diffed)
 function noiseNormal(size=256, strength=1.2, seed=1){
@@ -96,25 +103,25 @@ const M = {
   accent:  phys({ color:'#2457E6', roughness:.28, metalness:.9, iridescence:.0001, iridescenceIOR:1.8, iridescenceThicknessRange:[250,900] }),
   forkLow: phys({ color:'#18181A', roughness:.32, metalness:.1, clearcoat:.9, clearcoatRoughness:.08 }),
   forkUp:  phys({ color:'#121214', roughness:.12, metalness:.8, clearcoat:1, clearcoatRoughness:.03 }),
-  stanch:  phys({ color:'#C9CCD1', roughness:.15, metalness:1 }),
-  knob:    phys({ color:'#C81E2A', roughness:.25, metalness:.85 }),
+  stanch:  std({ color:'#C9CCD1', roughness:.15, metalness:1 }),
+  knob:    std({ color:'#C81E2A', roughness:.25, metalness:.85 }),
   spring:  phys({ color:'#D4A33A', roughness:.3, metalness:.6, clearcoat:.8, clearcoatRoughness:.12 }),
-  shockBody: phys({ color:'#1C1C1F', roughness:.28, metalness:.85 }),
-  rims:    phys({ color:'#18181A', roughness:.35, metalness:.75 }),
-  spokes:  phys({ color:'#1E1E20', roughness:.3, metalness:.9 }),
-  tires:   phys({ color:'#1B1B1B', roughness:.9, metalness:0, normalMap:grain, normalScale:new THREE.Vector2(.35,.35) }),
-  grips:   phys({ color:'#2457E6', roughness:.85, metalness:0, normalMap:grain, normalScale:new THREE.Vector2(.6,.6) }),
-  bar:     phys({ color:'#18181A', roughness:.32, metalness:.8 }),
+  shockBody: std({ color:'#1C1C1F', roughness:.28, metalness:.85 }),
+  rims:    std({ color:'#18181A', roughness:.35, metalness:.75 }),
+  spokes:  std({ color:'#1E1E20', roughness:.3, metalness:.9 }),
+  tires:   std({ color:'#1B1B1B', roughness:.9, metalness:0, normalMap:grain, normalScale:new THREE.Vector2(.35,.35) }),
+  grips:   std({ color:'#2457E6', roughness:.85, metalness:0, normalMap:grain, normalScale:new THREE.Vector2(.6,.6) }),
+  bar:     std({ color:'#18181A', roughness:.32, metalness:.8 }),
   saddle:  phys({ color:'#151515', roughness:.62, metalness:0, sheen:.4, sheenRoughness:.7, normalMap:grain, normalScale:new THREE.Vector2(.25,.25) }),
-  saddleBase: phys({ color:'#141416', roughness:.4, metalness:.1 }),
-  seatpost:phys({ color:'#131315', roughness:.25, metalness:.6 }),
+  saddleBase: std({ color:'#141416', roughness:.4, metalness:.1 }),
+  seatpost:std({ color:'#131315', roughness:.25, metalness:.6 }),
   chain:   phys({ color:'#BFC3C8', roughness:.3, metalness:1, iridescence:.0001, iridescenceIOR:1.8, iridescenceThicknessRange:[250,900] }),
-  rotor:   phys({ color:'#B8BBC0', roughness:.35, metalness:1 }),
-  cranks:  phys({ color:'#1C1C1E', roughness:.3, metalness:.8 }),
-  pedals:  phys({ color:'#18181A', roughness:.5, metalness:.5 }),
-  rubber:  phys({ color:'#141414', roughness:.88, metalness:0 }),
-  black:   phys({ color:'#161618', roughness:.32, metalness:.35 }),
-  blackMetal: phys({ color:'#1A1A1D', roughness:.3, metalness:.85 }),
+  rotor:   std({ color:'#B8BBC0', roughness:.35, metalness:1 }),
+  cranks:  std({ color:'#1C1C1E', roughness:.3, metalness:.8 }),
+  pedals:  std({ color:'#18181A', roughness:.5, metalness:.5 }),
+  rubber:  std({ color:'#141414', roughness:.88, metalness:0 }),
+  black:   std({ color:'#161618', roughness:.32, metalness:.35 }),
+  blackMetal: std({ color:'#1A1A1D', roughness:.3, metalness:.85 }),
 };
 M.saddle.sheenColor.set('#9a9a9a');   // three's default sheen color is black, which hides the sheen
 M.nipples = M.accent.clone(); M.nipples.vertexColors = true;   // per-nipple colors for "Rainbow"
@@ -170,9 +177,9 @@ function whiteAlpha(img){
   const d = g.getImageData(0, 0, c.width, c.height);
   for (let i=0;i<d.data.length;i+=4){ const lum=(d.data[i]+d.data[i+1]+d.data[i+2])/3; d.data[i]=d.data[i+1]=d.data[i+2]=255; d.data[i+3]=Math.min(d.data[i+3], 255-lum*.0 ); }
   g.putImageData(d, 0, 0);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; t.flipY = false; return t;
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.flipY = false; return t;
 }
-const decalMat = phys({ color:'#F4F4F2', roughness:.35, metalness:.05, clearcoat:.6, transparent:true, alphaTest:.3, polygonOffset:true, polygonOffsetFactor:-4, polygonOffsetUnits:-4 });
+const decalMat = std({ color:'#F4F4F2', roughness:.35, metalness:.05, clearcoat:.6, transparent:true, alphaTest:.3, polygonOffset:true, polygonOffsetFactor:-4, polygonOffsetUnits:-4 });
 
 /* ============ text decals ============ */
 // Every decal mesh gets its own canvas, sized to the part of the original image its UVs use.
@@ -197,7 +204,7 @@ function paintText(g, s, x, y, size, fx){
 const fxPad = (fx, size) => fx === 1 ? size*.16 : fx === 2 ? size*.07 : fx === 3 ? size*.22 : 0;
 
 class TextDecal {
-  constructor(mesh, spot, img, res = 1024){
+  constructor(mesh, spot, img, res = 512){
     const uv = mesh.geometry.attributes.uv;
     let u0 = 1, v0 = 1, u1 = 0, v1 = 0;
     for (let i = 0; i < uv.count; i++) { const u = uv.getX(i), v = uv.getY(i); u0 = Math.min(u0, u); v0 = Math.min(v0, v); u1 = Math.max(u1, u); v1 = Math.max(v1, v); }
@@ -206,7 +213,7 @@ class TextDecal {
     const c = this.canvas = document.createElement('canvas');
     c.width = Math.max(16, Math.round(w * s)); c.height = Math.max(16, Math.round(h * s));
     const t = this.tex = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace; t.flipY = false; t.anisotropy = 8;
+    t.colorSpace = THREE.SRGBColorSpace; t.flipY = false; t.anisotropy = 4;
     t.repeat.set(1 / du, 1 / dv); t.offset.set(-u0 / du, -v0 / dv);
     // world positions and canvas pixel positions of every vertex
     const pos = mesh.geometry.attributes.position, P = [], X = [];
@@ -220,6 +227,11 @@ class TextDecal {
     this.fit = spot.fit || [.92, .72];
     this.arc = spot.arc ? this.fitArc(P, X, spot.arc) : null;
     this.sig = '';
+    // decals of the same spot that would draw the same canvas (same size, orientation, arc and UV rectangle) share one
+    // TextDecal. Never across spots: the down tube and the frame use the same logo image but carry different text.
+    const r = v => Math.round(v * 100) / 100, a = this.arc;
+    this.key = [spot.id, res, c.width, c.height, this.rot, this.flip, this.fit, a && [a.cx, a.cy, a.r0, a.r1, a.a0, a.a1].map(v => Math.round(v / 2) * 2),
+      r(t.repeat.x), r(t.repeat.y), r(t.offset.x), r(t.offset.y)].join();
   }
   // world direction of canvas +x, area-weighted over all triangles
   canvasXDir(mesh, P, X){
@@ -311,6 +323,9 @@ class TextDecal {
 }
 const spotDecals = Object.fromEntries(TEXT_SPOTS.map(s => [s.id, []]));   // spot id → decalInfo entries
 const spotOf = node => TEXT_SPOTS.find(s => s.nodes.test(node));
+const logoMaps = new Map();       // source image → its white-on-transparent texture (several decals share a logo image)
+const textShare = new Map();      // TextDecal.key → TextDecal
+const sharedText = td => { if (!textShare.has(td.key)) textShare.set(td.key, td); return textShare.get(td.key); };
 
 
 MeshoptDecoder.useWorkers?.(2);   // decode GLB buffers off the main thread
@@ -322,6 +337,7 @@ const idle = () => new Promise(r => (window.requestIdleCallback || setTimeout)(r
 function buildModel(gltf, name){
   const root = gltf.scene; root.rotation.y = -Math.PI/2; root.updateMatrixWorld(true);
   const m = { name, root, nodes: {}, meshes: {}, decals: [], knobby: [], collars: { inner: [], outer: [] }, deform: {}, pickables: [] };
+  const bitmaps = new Set();
   root.traverse(o => {
     if (!o.isMesh) return;
     const nodeName = (o.parent && o.parent !== root && o.parent.name) ? o.parent.name : o.name;
@@ -331,11 +347,14 @@ function buildModel(gltf, name){
     o.userData.node = nodeName;
     if (/Decal/i.test(nodeName)) {
       let info = decalInfo[nodeName];
+      const src = o.material.map?.image;
+      if (src) bitmaps.add(src);
       if (!info) {   // first LOD: build the shared material, original logo and text canvases for this decal
-        const src = o.material.map?.image, mat = decalMat.clone(); if (src) mat.map = whiteAlpha(src);
+        const mat = decalMat.clone();
+        if (src) { if (!logoMaps.has(src)) logoMaps.set(src, whiteAlpha(src)); mat.map = logoMaps.get(src); }
         const spot = src ? spotOf(nodeName) : null;
         info = decalInfo[nodeName] = { mat, baseMap: mat.map, spot, shown: true };
-        if (spot) { info.td = new TextDecal(o, spot, src); info.tdThumb = new TextDecal(o, spot, src, 256); spotDecals[spot.id].push(info); }
+        if (spot) { info.td = sharedText(new TextDecal(o, spot, src)); info.tdThumb = sharedText(new TextDecal(o, spot, src, 256)); spotDecals[spot.id].push(info); }
       }
       o.material = info.mat; o.castShadow = false; o.userData.slot = 'decal'; o.userData.spot = info.spot?.id;
       m.decals.push(o);
@@ -347,6 +366,7 @@ function buildModel(gltf, name){
     m.meshes[o.name] = o;
     m.pickables.push(o);
   });
+  for (const b of bitmaps) b.close?.();   // the glTF's own decal images: copied into canvases above, or not needed (second LOD)
   setupDeformers(m);
   if (m.meshes.Spoke_nipples) m.meshes.Spoke_nipples.material = M.nipples;
   mergeStatic(m);
@@ -737,7 +757,7 @@ function frame(now){
     }
     showModel(want);
   }
-  thumbStep(now);   // draws into a corner of the canvas; the full render below paints over it in the same frame
+  if (thumbPending) { thumbPending = false; thumbStep(now); scheduleThumb(); }   // draws into a corner; the full render below paints over it
   // static shadows: one shadow pass when parts move, appear or disappear (after thumbStep, so a look's shadow never leaks in)
   if (deforming) shadowDirty = true;
   const shadowPass = shadowDirty;
@@ -746,7 +766,7 @@ function frame(now){
   const r0 = performance.now(); renderer.render(scene, camera); perfTick(r0, performance.now(), shadowPass);
   res.end();
   lastFrame = now;
-  const busy = cameraMoving || deforming || anims.size > 0 || tween || (modelReady && thumbQueue.length > 0);
+  const busy = cameraMoving || deforming || anims.size > 0 || tween;
   clearTimeout(restTimer);
   if (busy) { requestRender(); return; }
   lastFrame = 0;
@@ -771,16 +791,27 @@ const TW = 336, TH = 184;   // 2x of the 168×92 card thumbnail
 const thumbCam = new THREE.PerspectiveCamera(22, TW / TH, .1, 30);
 thumbCam.position.set(.45, .82, 3.55); thumbCam.lookAt(0, .5, 0);
 const thumbCanvas = Object.assign(document.createElement('canvas'), { width: TW, height: TH });
-const thumbCache = new Map();   // `${theme}|${look}` → data URL
-let thumbQueue = [], lastThumb = 0, modelReady = false;
+const thumbCache = new Map();   // `${theme}|${look}` → data URL, mirrored in sessionStorage for the session
+let thumbQueue = [], lastThumb = 0, modelReady = false, thumbPending = false, looksVisible = false, thumbIdle = 0;
+// session cache key: changes whenever the looks or the model change
+const THUMB_KEY = 'looks:' + [...JSON.stringify(PRESETS) + LOD_URL.low].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7).toString(36);
+const thumbStore = { get: k => { try { return sessionStorage.getItem(THUMB_KEY + '|' + k); } catch (e) { return null; } },
+  set: (k, v) => { try { sessionStorage.setItem(THUMB_KEY + '|' + k, v); } catch (e) {} } };
+// lazily: only while the look cards are on screen, one thumbnail per idle callback (each costs one frame)
+function scheduleThumb(){
+  if (thumbIdle || !modelReady || !looksVisible || !thumbQueue.length) return;
+  thumbIdle = (window.requestIdleCallback || setTimeout)(() => { thumbIdle = 0; thumbPending = true; requestRender(); }, { timeout: 500 });
+}
 const themeName = () => { const r = document.documentElement; return (r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light'; };
 function queueThumbs(){
   const t = themeName(); thumbQueue = [];
   PRESETS.forEach((p, i) => {
-    const url = thumbCache.get(t + '|' + i); if (url) { setThumb(i, url); return; }
+    const url = thumbCache.get(t + '|' + i) || thumbStore.get(t + '|' + i);
+    if (url) { thumbCache.set(t + '|' + i, url); setThumb(i, url); return; }
     if (TEXT_SPOTS.some(sp => p.c[sp.key])) thumbQueue.push({ i, prep: true });   // draw and upload its lettering a frame early
     thumbQueue.push({ i });
   });
+  scheduleThumb();
 }
 // draw a look's text into the small thumbnail decals and upload them, so its thumbnail frame only renders
 function prepThumbText(i){
@@ -791,7 +822,7 @@ function prepThumbText(i){
 }
 function thumbStep(now){
   // one look per frame, only while nothing is animating (the swap below applies states instantly)
-  if (!modelReady || !thumbQueue.length || anims.size || tween || models.some(m => Object.values(m.deform).some(d => d.anim)) || now - lastThumb < 90) return;
+  if (!modelReady || !thumbQueue.length || anims.size || tween || models.some(m => Object.values(m.deform).some(d => d.anim))) return;
   const buf = renderer.getDrawingBufferSize(new THREE.Vector2()); if (buf.x < TW || buf.y < TH) return;
   lastThumb = now;
   const job = thumbQueue.shift(), i = job.i, theme = themeName(), saved = { ...state };
@@ -812,7 +843,7 @@ function thumbStep(now){
   thumbMode = false; Object.assign(state, saved); applyState(true, false, [low]);
   lit.forEach(([m, v]) => m.emissiveIntensity = v);
   // encode off the main thread, then hand over a data URL
-  thumbCanvas.toBlob(b => { const r = new FileReader(); r.onload = () => { thumbCache.set(theme + '|' + i, r.result); if (theme === themeName()) setThumb(i, r.result); }; r.readAsDataURL(b); }, 'image/png');
+  thumbCanvas.toBlob(b => { const r = new FileReader(); r.onload = () => { thumbCache.set(theme + '|' + i, r.result); thumbStore.set(theme + '|' + i, r.result); if (theme === themeName()) setThumb(i, r.result); }; r.readAsDataURL(b); }, 'image/webp', .85);
 }
 // cross-fade: load into the hidden layer, then swap
 function setThumb(i, url){
@@ -1159,6 +1190,7 @@ document.getElementById('themeBtn').onclick = () => {
 };
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!document.documentElement.dataset.theme) { syncGround(); queueThumbs(); } });
 new ResizeObserver(syncLooks).observe(document.getElementById('presets'));
+new IntersectionObserver(([e]) => { looksVisible = e.isIntersecting; scheduleThumb(); }).observe(document.getElementById('presets'));
 try { const t = localStorage.getItem('dh-theme'); if (t) document.documentElement.dataset.theme = t; } catch(e) {}
 syncGround();
 updateUI();

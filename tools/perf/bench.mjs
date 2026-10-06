@@ -8,7 +8,7 @@ import fs from 'node:fs';
 const args = process.argv.slice(2), label = args[0] || 'run';
 const opt = k => { const i = args.indexOf('--' + k); return i > 0 ? args[i + 1] : null; };
 const PAGE = opt('url') || 'http://localhost:5181/';
-const Q = opt('q') ? '&' + opt('q') : '';
+const Q = (opt('q') ? '&' + opt('q') : '') + (opt('hash') ? '#' + opt('hash') : '');
 const only = (opt('only') || 'idle,drag,mobile,load,shots').split(',');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const SHOT_VIEWS = ['overview', 'cockpit', 'tire', 'downtube'];
