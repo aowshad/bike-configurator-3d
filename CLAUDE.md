@@ -27,10 +27,16 @@ src/config.js              ALL product data: options, prices, presets, camera vi
                            mesh→slot mapping, paint finishes  ← most edits happen here
 src/main.js                three.js scene, materials, model loading, applying state, UI rendering
 src/looks.js               generated styles: shader patches, normal maps, procedural tires, vertex Deformer
-assets/models/bike.glb     web-ready model (7.2 MB, 1.36M tris, meshopt compressed)
+src/quality.js             adaptive resolution, quality modes (Auto/High/Fast), low-end detection
+src/perf.js                ?perf overlay and bench hooks
+assets/models/bike-lod1.glb  light model (190k tris, 1.5 MB): first load, dragging, thumbnails, picking, Fast mode
+assets/models/bike-lod0.glb  at-rest model (661k tris, 3.5 MB), streamed in after the page is configurable
+assets/models/bike.glb     full web model (1.36M tris): source for the LODs only, the app doesn't load it
+assets/poster/             loading posters and Fast mode's contact shadow (tools/perf/poster.mjs)
+tools/perf/                bench.mjs, check.mjs (regression), diff.mjs, poster.mjs — see docs/PERF.md
 legacy/v1-trail26/         first prototype (old free model), kept for reference
 tools/model-pipeline/      Blender export + optimize scripts that produce bike.glb
-docs/                      ARCHITECTURE, MODEL-PIPELINE, CUSTOMIZING, ROADMAP
+docs/                      ARCHITECTURE, MODEL-PIPELINE, CUSTOMIZING, ROADMAP, PERF
 ```
 
 No build step and no bundler. three.js r170 loads from jsDelivr through the importmap in `index.html`.
@@ -46,10 +52,23 @@ Keep it that way unless the roadmap item says otherwise.
 - Mobile at 375px must not scroll horizontally. The stage is on top and the panel scrolls below it.
 - Keep the UI clean and professional. Don't add filler sections.
 
+## Performance rules (see docs/PERF.md)
+
+- **Never render in a loop.** Call `requestRender()` after changing anything visible; use `run()` for animations (it keeps
+  frames coming until they finish). An idle page must show **0 renders/s** in the `?perf` overlay.
+- **Never render outside `frame()`** (or the same task as a full render): `preserveDrawingBuffer` is off, so a partial
+  render would be presented on its own. Corner renders (thumbnails, uploads) happen inside `frame()` before the main render.
+- **Silhouette changes set `shadowDirty`.** Shadows are static; add new toggles or deformations to the shadow signature in `applyState()`.
+- **Both LODs must follow the state.** Put per-model geometry changes in `syncModel()`, never on `low` or `detail` alone.
+  After changing the model, run `npm run lods && npm run check` in `tools/model-pipeline` and `node poster.mjs` in `tools/perf`.
+- **No new shader programs after load.** Hidden variants are compiled up front; `node check.mjs` (and `--quality fast`)
+  fails on any new program, missed shadow update, or console warning.
+- **At rest, the look must not change.** Compare with `node bench.mjs <label> --only shots` and `node diff.mjs base <label>`.
+
 ## How things work (short)
 
 - **State** is a flat object of option indexes, plus `height` (a number) and the text spot strings (`name` for the down tube, `<spot>Txt` for the rest). Values that differ from `DEFAULT` are written to the URL hash. That is what the Share button copies.
-- **Slots:** every mesh primitive in the GLB is mapped by `node/material` name to a slot such as `frame`, `rear`, `accent` or `tires` (`slotFor()` in `config.js`). Each slot has one shared `MeshPhysicalMaterial` in `main.js` (`M.*`). Changing a color animates that material.
+- **Slots:** every mesh primitive in the GLB is mapped by `node/material` name to a slot such as `frame`, `rear`, `accent` or `tires` (`slotFor()` in `config.js`). Each slot has one shared material in `main.js` (`M.*`): `MeshPhysicalMaterial` only where clearcoat, iridescence or sheen shows, `MeshStandardMaterial` elsewhere. Changing a color animates that material.
 - **`applyState()`** in `main.js` turns the state into material colors and finishes, part visibility (tire swap, chain guide, pedals), the saddle offset and stickers. Add new behavior there.
 - **Click on bike:** a raycast finds the mesh, reads its slot from `SLOT_SECTION`, and opens that panel section. The camera then flies to `VIEWS[section.focus]`.
 

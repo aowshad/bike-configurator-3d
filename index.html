@@ -6,10 +6,51 @@
 <title>Bike Configurator 3D</title>
 <meta name="description" content="Realistic 3D bike configurator: paint, parts and stickers, live in the browser.">
 <link rel="icon" href="data:,">
+<script>
+  // Runs first, before any stylesheet: applies the saved theme and starts downloading the poster (a pre-rendered image of
+  // the bike shown until the 3D model is ready, made by tools/perf/poster.mjs). The stage shape follows from the window:
+  // beside the 420 px panel above 900 px, else full width at 56% height. Below 0.9 aspect the camera frames by width.
+  (function(){
+    var r = document.documentElement, t = null;
+    try { t = localStorage.getItem('dh-theme'); } catch (e) {}
+    if (t) r.dataset.theme = t;
+    if (/[?&]noposter/.test(location.search)) return;
+    var dark = t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    var w = innerWidth, h = innerHeight, m = (w > 900 ? (w - 420) / h : w / (h * .56)) < .9;
+    var src = 'assets/poster/' + (m ? 'mobile' : 'desktop') + '-' + (dark ? 'dark' : 'light') + '.webp';
+    window.__poster = { src: src, m: m };
+    var l = document.createElement('link'); l.rel = 'preload'; l.as = 'image'; l.href = src; l.fetchPriority = 'high';
+    document.head.appendChild(l);
+  })();
+</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Archivo+Black&family=Bebas+Neue&family=Permanent+Marker&family=Racing+Sans+One&display=swap" rel="stylesheet">
+<!-- the light model starts downloading with the HTML -->
+<link rel="preload" href="assets/models/bike-lod1.glb" as="fetch" crossorigin fetchpriority="low">
+<!-- fonts never block first paint: the sheet applies when it arrives (display=swap; main.js waits for it before drawing text) -->
+<link id="fontcss" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Archivo+Black&family=Bebas+Neue&family=Permanent+Marker&family=Racing+Sans+One&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Archivo+Black&family=Bebas+Neue&family=Permanent+Marker&family=Racing+Sans+One&display=swap"></noscript>
 <link rel="stylesheet" href="src/styles.css">
+<!-- the import map must come before any module loads, including the preloads below -->
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<!-- fetch the whole module graph in parallel instead of import by import -->
+<link rel="modulepreload" href="src/main.js">
+<link rel="modulepreload" href="src/config.js">
+<link rel="modulepreload" href="src/looks.js">
+<link rel="modulepreload" href="src/quality.js">
+<link rel="modulepreload" href="src/perf.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/loaders/GLTFLoader.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/utils/BufferGeometryUtils.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/environments/RoomEnvironment.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/meshopt_decoder.module.js" crossorigin>
 </head>
 <body>
 <div class="app">
@@ -18,19 +59,13 @@
     <div class="hint" id="hint">Drag to rotate · Scroll to zoom · Click a part to edit it</div>
     <img class="poster" id="poster" alt="" fetchpriority="high">
     <script>
-      // Poster: a pre-rendered image of the bike (tools/perf/poster.mjs), shown until the 3D model is ready.
-      // Runs before first paint: applies the saved theme and picks the poster for this stage shape and theme.
-      (function(){
-        var r = document.documentElement, t = null, p = document.getElementById('poster');
-        try { t = localStorage.getItem('dh-theme'); } catch (e) {}
-        if (t) r.dataset.theme = t;
-        if (/[?&]noposter/.test(location.search)) { p.remove(); return; }
-        var dark = t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-        var s = document.getElementById('stage').getBoundingClientRect(), m = s.width / s.height < .9;
-        p.className += m ? ' m' : ' d';
+      (function(){   // show the poster picked in <head>
+        var p = document.getElementById('poster'), P = window.__poster;
+        if (!P) { p.remove(); return; }
+        p.className += P.m ? ' m' : ' d';
         if (location.hash.length > 1) p.className += ' dim';   // a shared build: the poster shows the default one
         p.onload = function(){ performance.mark('first-visual'); document.getElementById('stage').classList.add('hasPoster'); };
-        p.src = 'assets/poster/' + (m ? 'mobile' : 'desktop') + '-' + (dark ? 'dark' : 'light') + '.webp';
+        p.src = P.src;
       })();
     </script>
     <div class="loader" id="loader"><div class="box"><div id="loadTxt">Loading bike… 0%</div><div class="bar"><i id="loadBar"></i></div></div></div>
@@ -74,12 +109,6 @@
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script type="importmap">
-{ "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
-} }
-</script>
 <script type="module" src="src/main.js"></script>
 </body>
 </html>

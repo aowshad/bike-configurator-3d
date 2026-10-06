@@ -196,9 +196,13 @@ const decalMat = std({ color:'#F4F4F2', roughness:.35, metalness:.05, transparen
 const WHEEL = { front:new THREE.Vector2(.63, .355), rear:new THREE.Vector2(-.625, .365) };
 const fontKey = f => `${f[2]} 64px "${f[1]}"`;
 const fontLoads = new Map(), fontsReady = new Set();
+// the Google Fonts sheet loads without blocking paint (media="print" until it arrives); its @font-face rules only
+// exist once it applies, so font loading waits for it
+const fontCss = document.getElementById('fontcss');
+const fontCssReady = !fontCss || fontCss.media === 'all' ? Promise.resolve() : new Promise(r => { fontCss.addEventListener('load', r, { once: true }); fontCss.addEventListener('error', r, { once: true }); });
 function loadFont(f){
   const k = fontKey(f);
-  if (!fontLoads.has(k)) fontLoads.set(k, document.fonts.load(k, 'AZaz09').then(r => { if (r.length) fontsReady.add(k); return r.length > 0; }, () => false));
+  if (!fontLoads.has(k)) fontLoads.set(k, fontCssReady.then(() => document.fonts.load(k, 'AZaz09')).then(r => { if (r.length) fontsReady.add(k); return r.length > 0; }, () => false));
   return fontLoads.get(k);
 }
 function paintText(g, s, x, y, size, fx){

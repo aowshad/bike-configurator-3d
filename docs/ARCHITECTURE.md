@@ -136,8 +136,19 @@ World units are meters. The ground is y = 0, the bike faces +X, and the drive si
 Approximate positions: front wheel center (0.63, 0.355, 0), rear wheel center (−0.625, 0.365, 0), bar ≈ y 1.05, saddle ≈ (−0.31, 0.9, 0).
 The seat tube axis is (−0.546, 0.838, 0) in world space.
 
-## Performance
+## Performance (details and numbers in docs/PERF.md)
 
-- Rendering 1.36M triangles plus a 2048 shadow map runs at about 75 fps on an Apple M4 in Chrome.
-- Materials are shared per slot, so draw calls stay at about 100.
-- Avoid shader recompiles (see CLAUDE.md, gotcha 3).
+- **Loading:** poster (`assets/poster/`) → `bike-lod1.glb` (configurable) → `bike-lod0.glb` in the background (workers,
+  idle-time build, hidden 1×1 upload render, swapped in at rest). `data-lod` on `<html>`: `light` → `detail`, or
+  `light-only` in Fast mode.
+- **Two models in the scene** (`models`, `low`, `detail` in main.js): same materials, decal materials and text canvases;
+  per-model geometry state (`syncModel()`). lod0 draws at rest, lod1 while dragging, for thumbnails and for picking.
+  Static meshes that share a material are merged per model (`mergeStatic()`).
+- **Render on demand:** `requestRender()`; `frame()` renders and asks for another frame only while the camera, an
+  animation (`run()`), a deformation or a thumbnail job is active. Idle pages render nothing.
+- **Adaptive resolution** (`Resolution` in `src/quality.js`): full DPR at rest, 1.5/1.25 while the camera moves, 1.0 while
+  dragging or zooming, one full-quality frame 200 ms after it stops; a GPU-timer governor steps the moving resolution.
+- **Static shadows:** `shadowMap.autoUpdate = false`; `shadowDirty` is set when the silhouette changes.
+- **Quality modes** (`setFast()`): Auto / High / Fast. Fast = lod1, DPR 1, standard material twins, contact shadow, no
+  auto-rotate. Switching compiles with `compileAsync` while `holdRender` keeps the last frame.
+- **Tools:** `?perf` overlay; `tools/perf/` has `bench.mjs`, `check.mjs` (regression), `diff.mjs`, `poster.mjs`.

@@ -2,6 +2,32 @@
 
 How fast the configurator is, how it is measured, and what each optimization changed.
 
+## Summary (before → after)
+
+Measured on an Apple M4 (16 GB) in Chrome, 1440×900 at DPR 2 unless noted. Details per phase below.
+
+| | Before | After |
+|---|---|---|
+| Renders per second when idle | 60 | **0** |
+| Frame cost while dragging | 9.4 ms (1.36M tris, DPR 2) | **3.1–3.2 ms** (189k tris, DPR 1) |
+| Frame cost of the one at-rest frame | 9.4 ms | 7.4–10 ms (661k tris, DPR 2: fill-bound) |
+| Triangles at rest / while dragging | 1.36M / 1.36M | **661k / 190k** |
+| Draw calls | 80 | 68 |
+| Shader programs | 17 | **13** (11 in Fast) |
+| Textures | 56 | **32** |
+| JS heap | 59 MB | 39 MB (18–31 MB in Fast) |
+| Fast 4G: first visual | 8.9 s | **0.90–0.97 s** (poster) |
+| Fast 4G: configurable | 8.9 s | **2.73–2.78 s** (light model) |
+| Fast 4G: downloaded before configurable | 7.4 MB | **2.1 MB** (detailed model follows in the background; 5.6 MB in all, 2.3 MB in Fast) |
+| Long tasks after the page is configurable | | **0** |
+| At rest, pixels that differ from before | | 0.43–0.95% by more than 8/255, mean ≤ 0.41/255: faint shading on glossy parts, invisible side by side |
+
+**Against the "done when" targets:** idle renders 0 ✓ · first visual under 1 s ✓ · configurable under 3 s ✓ ·
+interaction at 1440×900 DPR 2: frames cost 3.1 ms on this M4, about a fifth of a 60 fps budget; an M1's GPU is roughly 1.5–2×
+slower, which still leaves a wide margin for 55+ fps, but it was not measured on an M1 ·
+375 px with 4× CPU throttle: 60 fps in emulation, **with a caveat**: Chrome throttles the CPU only, the GPU is still the M4's.
+The phone path is mostly GPU-bound, so this needs a check on a real mid-range phone (Auto picks Fast on weak ones).
+
 ## How to measure
 
 - **Overlay:** open the page with `?perf`. It shows renders per second, frame time (average and worst over the last 2 s),
@@ -123,10 +149,7 @@ The at-rest differences are faint shading changes on glossy surfaces from the si
 are identical (below). The poster and the loaded 3D view line up at any stage size; the poster is a fixed-size image, so
 it is slightly softer until the cross-fade.
 
-| Baseline | Phase 2 (lod0) |
-|---|---|
-| ![](perf/baseline-overview.webp) | ![](perf/p2-overview.webp) |
-| ![](perf/baseline-downtube.webp) | ![](perf/p2-downtube.webp) |
+See the before/after screenshots at the end of this page.
 
 ## Phase 3: cheaper materials and textures
 
@@ -176,3 +199,31 @@ it is slightly softer until the cross-fade.
 | JS heap | 39 MB | 18–31 MB |
 | Frame cost | 7.4–7.9 ms at rest, 3.1 ms dragging | 1.7–3.9 ms |
 | Fast 4G transferred | 5.8 MB (2.3 MB before configurable) | **2.3 MB** total |
+
+## Phase 5: loading polish
+
+- `<head>` starts the right poster first (picked from the window size and theme before any stylesheet), preconnects to
+  jsDelivr and the font hosts, and preloads `bike-lod1.glb` (`fetchpriority="low"`, so the poster and scripts go first).
+- The import map moved into `<head>` with `modulepreload` for the whole module graph (three, the five addons, the local
+  modules), so it downloads in parallel instead of import by import.
+- `three.module.min.js` instead of `three.module.js`: 171 KB instead of 265 KB over the wire.
+- Google Fonts no longer block first paint (`media="print"` until loaded, `display=swap`); text spots wait for the sheet
+  before drawing, so custom text never sticks in a fallback font.
+- Desktop posters are encoded at 1.5× (106–114 KB) instead of 2× (176–182 KB); they show for a second at most.
+
+| Fast 4G, 3 runs | After Phase 4 | After Phase 5 |
+|---|---|---|
+| First visual (poster) | 1.10–1.27 s | **0.94–0.97 s** |
+| Configurable (light model) | 3.4–3.6 s | **2.73–2.75 s** |
+| Detailed model in | 7.1–7.5 s | 6.6–6.7 s |
+
+## Before and after, at rest
+
+Same camera, same build (the default), UI chrome hidden. Left: before any of this work; right: now.
+
+| Before | After |
+|---|---|
+| ![](perf/baseline-overview.webp) | ![](perf/final-overview.webp) |
+| ![](perf/baseline-cockpit.webp) | ![](perf/final-cockpit.webp) |
+| ![](perf/baseline-tire.webp) | ![](perf/final-tire.webp) |
+| ![](perf/baseline-downtube.webp) | ![](perf/final-downtube.webp) |

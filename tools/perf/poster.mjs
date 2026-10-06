@@ -9,8 +9,9 @@ const PAGE = i >= 0 ? args[i + 1] : 'http://localhost:5181/';
 const dest = new URL('../../assets/poster/', import.meta.url).pathname;
 fs.mkdirSync(dest, { recursive: true });
 const b = await chromium.launch({ executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true, args: ['--use-angle=metal', '--ignore-gpu-blocklist'] });
-for (const [layout, w, h, mobile] of [['desktop', 1440, 900, false], ['mobile', 390, 844, true]]) for (const theme of ['light', 'dark']) {
-  const ctx = await b.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 2, isMobile: mobile, hasTouch: mobile });
+// desktop at 1.5× (a placeholder for a second or two: bytes matter more than sharpness), mobile at 2×
+for (const [layout, w, h, mobile, dpr] of [['desktop', 1440, 900, false, 1.5], ['mobile', 390, 844, true, 2]]) for (const theme of ['light', 'dark']) {
+  const ctx = await b.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: dpr, isMobile: mobile, hasTouch: mobile });
   const p = await ctx.newPage();
   await p.addInitScript(t => localStorage.setItem('dh-theme', t), theme);
   await p.goto(PAGE + '?debug&noposter');
@@ -20,7 +21,7 @@ for (const [layout, w, h, mobile] of [['desktop', 1440, 900, false], ['mobile', 
   const data = await p.evaluate(() => {
     const B = window.__bike; B.flyTo('overview', true);
     B.renderer.render(B.scene, B.camera);   // same task as the read, so the drawing buffer is still there
-    const c = B.renderer.domElement; return [c.toDataURL('image/webp', .82), c.width, c.height];
+    const c = B.renderer.domElement; return [c.toDataURL('image/webp', .72), c.width, c.height];
   });
   const file = `${dest}${layout}-${theme}.webp`;
   // once: the soft contact shadow used by Fast mode (no shadow map there): the real shadow, seen from above, at full

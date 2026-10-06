@@ -49,4 +49,6 @@ Work top to bottom, one item per session or commit. Tick items off here when the
 - [ ] Add an admin config: options and prices from JSON or an API instead of `config.js`.
 - [ ] Save builds to an account, and track analytics on option choices.
 - [ ] AR: `<model-viewer>` with GLB (Android) and USDZ (iOS), generated from the GLB.
-- [ ] Mobile performance: LOD meshes, KTX2 textures, and lower shadow resolution on small screens.
+- [x] Performance: render on demand, adaptive resolution, two LODs, poster-first loading, Fast quality mode (docs/PERF.md).
+- [ ] Measure on real devices: an M1 laptop and a mid-range Android phone (the emulated 4× CPU throttle keeps the M4 GPU).
+- [ ] KTX2 for the decal textures (only ~250 KB today, so low priority).

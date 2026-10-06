@@ -68,7 +68,7 @@ if (only.includes('idle') || only.includes('drag') || only.includes('shots')) {
   }
   if (only.includes('shots')) {
     // hide overlays that differ between runs (perf HUD, the hint that hides after a drag, the pulsing live dot)
-    await p.addStyleTag({ content: '.perfHud,.hint,.live i{visibility:hidden!important}' });
+    await p.addStyleTag({ content: '.perfHud,.hint,.live i,.toolbar,.brandmark,.loader{visibility:hidden!important}' });
     for (const v of SHOT_VIEWS) {
       await p.evaluate(v => window.__bike.flyTo(v), v);
       await p.waitForTimeout(2200);
