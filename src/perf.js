@@ -5,7 +5,7 @@
 export function initPerf(renderer, scene, camera){
   if (!new URLSearchParams(location.search).has('perf')) return () => {};
   const frames = [];   // [time, interval since previous render, cpu ms of render()]
-  let last = 0;
+  let last = 0, count = 0, shadows = 0;
   const el = document.createElement('div');
   el.className = 'perfHud'; el.setAttribute('aria-hidden', 'true');
   document.body.append(el);
@@ -31,12 +31,19 @@ export function initPerf(renderer, scene, camera){
   }, 500);
   window.__perf = {
     stats,
+    count: () => count,            // total main renders since load
+    shadowPasses: () => shadows,   // total shadow-map updates since load
     // cost of one full frame at the current size: n renders, each waited on
     bench(n = 30){
       sync(); const t0 = performance.now();
       for (let k = 0; k < n; k++) { renderer.render(scene, camera); sync(); }
       return +((performance.now() - t0) / n).toFixed(2);
     },
+    // the same at another pixel ratio (e.g. the 1.0 used while dragging), then back
+    benchAt(dpr, n = 30){
+      const was = renderer.getPixelRatio(); renderer.setPixelRatio(dpr);
+      const ms = window.__perf.bench(n); renderer.setPixelRatio(was); renderer.render(scene, camera); return ms;
+    },
   };
-  return (t0, t1) => { frames.push([t1, last ? t1 - last : 0, t1 - t0]); last = t1; if (frames.length > 600) frames.splice(0, 300); };
+  return (t0, t1, shadowPass) => { count++; if (shadowPass) shadows++; frames.push([t1, last ? t1 - last : 0, t1 - t0]); last = t1; if (frames.length > 600) frames.splice(0, 300); };
 }

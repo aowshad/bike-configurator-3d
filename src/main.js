@@ -7,6 +7,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { BASE_PRICE, OIL, PAINT, ANO, SECTIONS, PRESETS, DEFAULT, VIEWS, slotFor, SLOT_SECTION, SLOT_LABEL, FINISH,
   SECTION_ICONS, FONTS, TEXT_SPOTS, TEXT_PRICE, TEXT_PRICE_MAX, TEXT_CHARS, BAR_RISE, BAR_WIDTH, SADDLE_SHAPES, RIM_DEPTHS, SPOKE_SHAPES, PEDAL_STYLES } from './config.js';
 import { initPerf } from './perf.js';
+import { Resolution } from './quality.js';
 import { patchFrame, patchTires, patchGrips, patchSaddle, makeTires, Deformer, pieces, GRIP_TEX, SADDLE_TEX, SADDLE_PARAMS } from './looks.js';
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -26,11 +27,15 @@ readHash();
 
 /* ============ renderer ============ */
 const stage = document.getElementById('stage');
-const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, preserveDrawingBuffer:true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// preserveDrawingBuffer stays off: the image button and look thumbnails read the canvas in the same task they render it
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+const coarse = matchMedia('(pointer: coarse)').matches;
+const res = new Resolution(renderer, { rest: Math.min(devicePixelRatio, 2), cap: coarse ? 1.25 : 1.5, input: 1 });
+renderer.setPixelRatio(res.rest);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false;   // static shadows: redrawn only when geometry or visibility changes (shadowDirty)
 stage.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -45,8 +50,8 @@ controls.autoRotateSpeed = 0.7;
 const perfTick = initPerf(renderer, scene, camera);
 const sun = new THREE.DirectionalLight(0xffffff, 1.7);
 sun.position.set(1.5, 4, 2.4); sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left:-1.5, right:1.5, top:1.5, bottom:-1.5, near:.5, far:9 });
+sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left:-.95, right:.95, top:.95, bottom:-.95, near:3, far:6.5 });
 sun.shadow.bias = -0.0003; sun.shadow.normalBias = 0.006; sun.shadow.radius = 5;
 scene.add(sun);
 const back = new THREE.DirectionalLight(0xffffff, .6); back.position.set(-2.5, 2, -2); scene.add(back);
@@ -61,8 +66,9 @@ function flyTo(name){
   const f = THREE.MathUtils.clamp(1.0 / camera.aspect, 1, 2.1);
   to.c.sub(to.t).multiplyScalar(f).add(to.t);
   document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === name));
-  if (reduceMotion) { camera.position.copy(to.c); controls.target.copy(to.t); return; }
+  if (reduceMotion) { camera.position.copy(to.c); controls.target.copy(to.t); requestRender(); return; }
   tween = { from:{ c:camera.position.clone(), t:controls.target.clone() }, to, start:performance.now(), dur:950 };
+  requestRender();
 }
 const easeInOut = t => t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
 
@@ -116,6 +122,7 @@ const U = { frame: patchFrame([M.frame, M.rear]), tires: patchTires(M.tires), gr
 /* smooth transitions: materials, uniforms and style cross-fades share one animation list */
 const anims = new Map();
 function run(key, step, instant, dur = 340){
+  requestRender();
   if (instant || reduceMotion) { anims.delete(key); step(1); return; }
   anims.set(key, { step, start: performance.now(), dur });
 }
@@ -329,7 +336,7 @@ loader.load('assets/models/bike.glb', gltf => {
     pickables.push(o);
   });
   scene.add(bike);
-  FONTS.forEach(f => loadFont(f).then(ok => { if (ok) drawTexts(); }));
+  FONTS.forEach(f => loadFont(f).then(ok => { if (ok) { drawTexts(); requestRender(); } }));
   // generated treads (1 semi-slick, 2 slick street, 3 mud spike)
   makeTires(M.tires, HUBS).forEach((list, i) => { if (i) treads[i] = list; for (const m of list) { scene.add(m); pickables.push(m); } });
   setupDeformers();
@@ -340,7 +347,9 @@ loader.load('assets/models/bike.glb', gltf => {
   document.getElementById('loadTxt').textContent = 'Preparing materials…';
   // warm every look's deformation targets now, so rendering its thumbnail never computes geometry mid-frame
   for (const s of [state, ...PRESETS.map(p => ({ ...DEFAULT, ...p.c }))]) { const dp = deformParams(s); for (const k in deform) deform[k].warm(dp[k]); }
-  const ready = () => { sectionMats(); applyState(true); document.getElementById('loader').classList.add('done'); performance.mark('first-visual'); performance.mark('interactive'); flyTo('overview'); modelReady = true; queueThumbs(); };
+  // compileAsync covers the main pass only: one render with every variant visible also compiles the shadow-pass
+  // programs (e.g. the instanced mud-spike knobs). Same task as applyState below, so this frame is never shown.
+  const ready = () => { renderer.shadowMap.needsUpdate = true; renderer.render(scene, camera); sectionMats(); applyState(true); document.getElementById('loader').classList.add('done'); performance.mark('first-visual'); performance.mark('interactive'); flyTo('overview'); modelReady = true; queueThumbs(); };
   (renderer.compileAsync ? renderer.compileAsync(scene, camera) : Promise.resolve()).then(ready, ready);
 }, e => {
   if (!e.total) return;
@@ -547,7 +556,11 @@ function applyState(instant=false, ui=true){
     const map = custom ? textDecal(d).tex : d.userData.baseMap;
     if (d.material.map !== map) d.material.map = map;   // both are sRGB maps: same shader, no recompile
   }
+  // shadow signature: anything that changes the bike's silhouette
+  const sig = [state.tread, state.collars, state.guide, state.pedalsOn, state.height, state.pedalStyle, state.rise, state.width, state.saddleShape, state.rimDepth, state.spokeShape].join();
+  if (sig !== shadowSig) { shadowSig = sig; shadowDirty = true; }
   if (ui) updateUI();
+  requestRender();
 }
 const spotText = sp => { const t = state[sp.key].trim(); return state[sp.id + 'Case'] ? t : t.toUpperCase(); };
 const spotStyle = sp => state.sameStyle ? { font: state.txtFont, col: 'logoColor', fx: state.txtFx }
@@ -570,22 +583,69 @@ function resize(){
   const r = stage.getBoundingClientRect();
   renderer.setSize(r.width, r.height, false);
   camera.aspect = r.width / r.height; camera.fov = camera.aspect < .9 ? 42 : 30; camera.updateProjectionMatrix();
+  // resizing clears the canvas, and ResizeObserver runs after this frame's rAF: render now so nothing flashes
+  if (frameReq) { cancelAnimationFrame(frameReq); frameReq = 0; }
+  frame(performance.now());
 }
-new ResizeObserver(resize).observe(stage); resize();
-renderer.setAnimationLoop(now => {
+
+/* ============ render on demand ============ */
+// Nothing renders unless something changed: the camera (controls, tweens, auto-rotate), a material or uniform
+// animation (run()), a deformation, a text redraw, a thumbnail job, or a resize. Idle = 0 renders per second.
+let frameReq = 0, lastFrame = 0, lastMove = -1e9, restTimer = 0, stageVisible = true, interactUntil = 0, pointerHeld = false;
+let shadowDirty = true, shadowSig = '';
+function requestRender(){
+  if (!frameReq && stageVisible && !document.hidden) frameReq = requestAnimationFrame(frame);
+}
+function frame(now){
+  frameReq = 0;
+  let cameraMoving = false;
   if (tween) {
     const t = Math.min(1, Math.max(0, (now - tween.start) / tween.dur)), k = easeInOut(t);
     camera.position.lerpVectors(tween.from.c, tween.to.c, k); controls.target.lerpVectors(tween.from.t, tween.to.t, k);
     if (t >= 1) tween = null;
+    cameraMoving = true;
   }
   // clamp at 0 too: rAF's `now` can be earlier than the performance.now() an animation started at, and a negative
   // step would overshoot (iridescence .0001 → -.005 drops the define and recompiles the shader)
   for (const [key, a] of anims) { const t = Math.min(1, Math.max(0, (now - a.start) / a.dur)); if (t >= 1) anims.delete(key); a.step(1 - Math.pow(1 - t, 3)); }
-  for (const d of Object.values(deform)) d.step(now);
-  controls.update();
+  let deforming = false;
+  for (const d of Object.values(deform)) if (d.step(now)) deforming = true;
+  if (controls.update()) cameraMoving = true;   // true while damping or auto-rotate moves the camera
+  if (controls.autoRotate) cameraMoving = true;
+  if (!stageVisible || document.hidden) return;
+  // resolution: full at rest, capped while the camera moves, 1.0 while the user drags or zooms. A click that doesn't
+  // move the camera keeps full resolution, and the moving resolution is held for 200 ms so quick drags don't thrash.
+  if (cameraMoving) lastMove = now;
+  const input = pointerHeld || now < interactUntil;
+  let mode = cameraMoving ? (input ? 'input' : 'move') : 'rest';
+  if (mode === 'rest' && now - lastMove < 200) mode = null;
+  if (mode && mode !== 'rest' && lastFrame) res.sample(now - lastFrame);
+  if (mode) res.apply(res.target(mode));
   thumbStep(now);   // draws into a corner of the canvas; the full render below paints over it in the same frame
-  const r0 = performance.now(); renderer.render(scene, camera); perfTick(r0, performance.now());
-});
+  // static shadows: one shadow pass when parts move, appear or disappear (after thumbStep, so a look's shadow never leaks in)
+  if (deforming) shadowDirty = true;
+  const shadowPass = shadowDirty;
+  if (shadowDirty) { renderer.shadowMap.needsUpdate = true; shadowDirty = false; }
+  res.begin();
+  const r0 = performance.now(); renderer.render(scene, camera); perfTick(r0, performance.now(), shadowPass);
+  res.end();
+  lastFrame = now;
+  const busy = cameraMoving || deforming || anims.size > 0 || tween || (modelReady && thumbQueue.length > 0);
+  clearTimeout(restTimer);
+  if (busy) { requestRender(); return; }
+  lastFrame = 0;
+  // settled: about 200 ms later, one full-quality frame (only if the last one wasn't already full quality)
+  if (Math.abs(renderer.getPixelRatio() - res.target('rest')) > .01) restTimer = setTimeout(requestRender, 200);
+}
+new ResizeObserver(resize).observe(stage);
+controls.addEventListener('change', requestRender);
+renderer.domElement.addEventListener('pointerdown', () => { pointerHeld = true; });
+addEventListener('pointerup', () => { pointerHeld = false; });
+addEventListener('pointercancel', () => { pointerHeld = false; });
+renderer.domElement.addEventListener('wheel', () => { interactUntil = performance.now() + 150; requestRender(); }, { passive: true });
+// pause while the tab is hidden or the stage is scrolled out of view
+document.addEventListener('visibilitychange', () => { if (!document.hidden) requestRender(); });
+new IntersectionObserver(([e]) => { stageVisible = e.isIntersecting; if (stageVisible) requestRender(); }).observe(stage);
 
 /* ============ look thumbnails ============ */
 // Each look is rendered once with the main renderer into a scissored corner of the canvas, copied out, and cached
@@ -624,7 +684,6 @@ function thumbStep(now){
   lit.forEach(([m]) => m.emissiveIntensity = 0);   // a hovered part's glow must not end up in a thumbnail
   thumbMode = true; Object.assign(state, DEFAULT, PRESETS[i].c); applyState(true, false);
   const pr = renderer.getPixelRatio(), size = renderer.getSize(new THREE.Vector2()), clear = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha();
-  renderer.shadowMap.autoUpdate = false;   // keep this frame's shadow map: saves a full pass, invisible at thumbnail size
   renderer.setScissorTest(true); renderer.setViewport(0, 0, TW / pr, TH / pr); renderer.setScissor(0, 0, TW / pr, TH / pr);
   const nip = meshes.Spoke_nipples; if (nip) nip.visible = false;
   renderer.setClearColor(0x000000, 0); renderer.render(scene, thumbCam);
@@ -632,7 +691,6 @@ function thumbStep(now){
   const g = thumbCanvas.getContext('2d'); g.clearRect(0, 0, TW, TH);
   g.drawImage(renderer.domElement, 0, buf.y - TH, TW, TH, 0, 0, TW, TH);
   renderer.setScissorTest(false); renderer.setViewport(0, 0, size.x, size.y); renderer.setClearColor(clear, alpha);
-  renderer.shadowMap.autoUpdate = true;
   thumbMode = false; Object.assign(state, saved); applyState(true, false);
   lit.forEach(([m, v]) => m.emissiveIntensity = v);
   // encode off the main thread, then hand over a data URL
@@ -951,7 +1009,7 @@ document.addEventListener('keydown', e => {
 });
 
 const spinBtn = document.getElementById('spinBtn');
-spinBtn.onclick = () => { controls.autoRotate = !controls.autoRotate; spinBtn.classList.toggle('on', controls.autoRotate); spinBtn.setAttribute('aria-pressed', controls.autoRotate); };
+spinBtn.onclick = () => { controls.autoRotate = !controls.autoRotate; requestRender(); spinBtn.classList.toggle('on', controls.autoRotate); spinBtn.setAttribute('aria-pressed', controls.autoRotate); };
 let toastT;
 function toast(m, action, fn){
   const t = document.getElementById('toast'); t.textContent = m;
@@ -972,7 +1030,7 @@ document.getElementById('shotBtn').onclick = () => {
   renderer.render(scene, camera);
   const a = document.createElement('a'); a.download = 'gravity-dh-build.png'; a.href = renderer.domElement.toDataURL('image/png'); a.click(); toast('Image saved');
 };
-function syncGround(){ const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; ground.material.opacity = dark ? .5 : .22; }
+function syncGround(){ const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; ground.material.opacity = dark ? .5 : .22; requestRender(); }
 document.getElementById('themeBtn').onclick = () => {
   const r = document.documentElement;
   const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;

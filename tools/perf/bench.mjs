@@ -52,7 +52,8 @@ if (only.includes('idle') || only.includes('drag') || only.includes('shots')) {
   if (only.includes('idle')) {
     const s = await p.evaluate(() => window.__perf.stats());
     const bench = await p.evaluate(() => window.__perf.bench(30));
-    result.idle = { ...s, benchMsPerFrame: bench };
+    const at1 = await p.evaluate(() => window.__perf.benchAt?.(1) ?? null);
+    result.idle = { ...s, benchMsPerFrame: bench, benchMsAtDpr1: at1 };
     console.log('idle', result.idle);
   }
   if (only.includes('drag')) {
@@ -63,6 +64,8 @@ if (only.includes('idle') || only.includes('drag') || only.includes('shots')) {
     console.log('drag', result.drag);
   }
   if (only.includes('shots')) {
+    // hide overlays that differ between runs (perf HUD, the hint that hides after a drag, the pulsing live dot)
+    await p.addStyleTag({ content: '.perfHud,.hint,.live i{visibility:hidden!important}' });
     for (const v of SHOT_VIEWS) {
       await p.evaluate(v => window.__bike.flyTo(v), v);
       await p.waitForTimeout(2200);
