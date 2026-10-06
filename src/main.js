@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 import { BASE_PRICE, OIL, PAINT, ANO, SECTIONS, PRESETS, DEFAULT, VIEWS, slotFor, SLOT_SECTION, SLOT_LABEL, FINISH,
   SECTION_ICONS, FONTS, TEXT_SPOTS, TEXT_PRICE, TEXT_PRICE_MAX, TEXT_CHARS, BAR_RISE, BAR_WIDTH, SADDLE_SHAPES, RIM_DEPTHS, SPOKE_SHAPES, PEDAL_STYLES } from './config.js';
@@ -60,13 +61,13 @@ ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
 
 /* ============ camera views (meters, bike faces +X, drive side +Z) ============ */
 let tween = null;
-function flyTo(name){
+function flyTo(name, instant){
   const v = VIEWS[name]; if (!v) return;
   const to = { c:new THREE.Vector3(...v.cam), t:new THREE.Vector3(...v.tgt) };
   const f = THREE.MathUtils.clamp(1.0 / camera.aspect, 1, 2.1);
   to.c.sub(to.t).multiplyScalar(f).add(to.t);
   document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === name));
-  if (reduceMotion) { camera.position.copy(to.c); controls.target.copy(to.t); requestRender(); return; }
+  if (instant || reduceMotion) { tween = null; camera.position.copy(to.c); controls.target.copy(to.t); controls.update(); requestRender(); return; }
   tween = { from:{ c:camera.position.clone(), t:controls.target.clone() }, to, start:performance.now(), dur:950 };
   requestRender();
 }
@@ -151,9 +152,15 @@ function fadeStyle(T, setSlot, idx, instant){
   run(T, k => { T.value = k; if (k >= 1) { setSlot('A', idx); T.a = idx; T.value = 0; } }, false, 300);
 }
 
-/* ============ model ============ */
-const nodes = {}; const decals = []; const pickables = []; const meshes = {};
-let treads = [[]], collars = { inner: [], outer: [] }, deform = {};
+/* ============ model: two LODs ============ */
+// bike-lod1 (≈190k triangles) loads first and is what the shopper configures on; bike-lod0 (≈660k, the at-rest look)
+// streams in afterwards. Both stay in the scene with the same materials: lod0 draws at rest, lod1 while the user drags
+// (and during any camera motion on touch devices), for look thumbnails and for picking. Geometry state (nodes,
+// deformers, collars, decal meshes) lives per model; materials, generated tires and decal canvases are shared.
+const models = [];                  // every loaded LOD
+let low = null, detail = null, drawn = null;
+const treads = [[]];                // [1..3] generated tires (shared); [0] = knobby, each model has its own (m.knobby)
+const decalInfo = {};               // decal node name → { mat, baseMap, spot, td, tdThumb }, shared by both LODs
 const HUBS = [[.63, .355], [-.625, .365]];   // front, rear wheel centers (world x, y)
 const SEAT_AXIS = new THREE.Vector3(-.546, .838, 0).normalize();
 
@@ -302,54 +309,125 @@ class TextDecal {
     });
   }
 }
-const spotMeshes = Object.fromEntries(TEXT_SPOTS.map(s => [s.id, []]));
+const spotDecals = Object.fromEntries(TEXT_SPOTS.map(s => [s.id, []]));   // spot id → decalInfo entries
 const spotOf = node => TEXT_SPOTS.find(s => s.nodes.test(node));
 
 
+MeshoptDecoder.useWorkers?.(2);   // decode GLB buffers off the main thread
 const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
-loader.load('assets/models/bike.glb', gltf => {
-  const bike = gltf.scene; bike.rotation.y = -Math.PI/2; bike.updateMatrixWorld(true);
-  bike.traverse(o => {
+const glbParam = new URLSearchParams(location.search).get('glb');   // ?glb=… loads one file only (pipeline checks)
+const LOD_URL = { low: 'assets/models/bike-lod1.glb', detail: 'assets/models/bike-lod0.glb' };
+const idle = () => new Promise(r => (window.requestIdleCallback || setTimeout)(r, { timeout: 300 }));
+
+function buildModel(gltf, name){
+  const root = gltf.scene; root.rotation.y = -Math.PI/2; root.updateMatrixWorld(true);
+  const m = { name, root, nodes: {}, meshes: {}, decals: [], knobby: [], collars: { inner: [], outer: [] }, deform: {}, pickables: [] };
+  root.traverse(o => {
     if (!o.isMesh) return;
-    const nodeName = (o.parent && o.parent !== bike && o.parent.name) ? o.parent.name : o.name;
-    const owner = (o.parent && o.parent !== bike) ? o.parent : o;
-    nodes[nodeName] = owner; owner.userData.basePos ??= owner.position.clone();
+    const nodeName = (o.parent && o.parent !== root && o.parent.name) ? o.parent.name : o.name;
+    const owner = (o.parent && o.parent !== root) ? o.parent : o;
+    m.nodes[nodeName] = owner; owner.userData.basePos ??= owner.position.clone();
     o.castShadow = true; o.receiveShadow = true;
     o.userData.node = nodeName;
     if (/Decal/i.test(nodeName)) {
-      const src = o.material.map?.image;
-      const m = decalMat.clone(); if (src) m.map = whiteAlpha(src);
-      o.material = m; o.castShadow = false; o.userData.slot = 'decal'; o.userData.baseMap = m.map;
-      decals.push(o);
-      const spot = spotOf(nodeName);
-      if (spot && src) {
-        o.userData.spot = spot.id; spotMeshes[spot.id].push(o);
-        o.userData.td = new TextDecal(o, spot, src);
-        o.userData.tdThumb = new TextDecal(o, spot, src, 256);   // small copy for look thumbnails: cheap to draw mid-frame
+      let info = decalInfo[nodeName];
+      if (!info) {   // first LOD: build the shared material, original logo and text canvases for this decal
+        const src = o.material.map?.image, mat = decalMat.clone(); if (src) mat.map = whiteAlpha(src);
+        const spot = src ? spotOf(nodeName) : null;
+        info = decalInfo[nodeName] = { mat, baseMap: mat.map, spot, shown: true };
+        if (spot) { info.td = new TextDecal(o, spot, src); info.tdThumb = new TextDecal(o, spot, src, 256); spotDecals[spot.id].push(info); }
       }
+      o.material = info.mat; o.castShadow = false; o.userData.slot = 'decal'; o.userData.spot = info.spot?.id;
+      m.decals.push(o);
     } else {
       const slot = slotFor(nodeName, o.material.name);
       o.material = M[slot] || M.black; o.userData.slot = slot;
-      if (slot === 'tires') treads[0].push(o);
+      if (slot === 'tires') m.knobby.push(o);
     }
-    meshes[o.name] = o;
-    pickables.push(o);
+    m.meshes[o.name] = o;
+    m.pickables.push(o);
   });
-  scene.add(bike);
+  setupDeformers(m);
+  if (m.meshes.Spoke_nipples) m.meshes.Spoke_nipples.material = M.nipples;
+  mergeStatic(m);
+  scene.add(root); models.push(m);
+  return m;
+}
+// warm every look's deformation targets, so applying a look or rendering its thumbnail never computes geometry mid-frame
+function warmDeforms(m){
+  for (const s of [state, ...PRESETS.map(p => ({ ...DEFAULT, ...p.c }))]) { const dp = deformParams(s); for (const k in m.deform) m.deform[k].warm(dp[k]); }
+}
+
+// Static, non-configurable parts that share a material become one mesh per material: fewer draw calls.
+// Anything deformed, toggled, moved, per-mesh textured (decals) or instanced stays separate.
+const DYNAMIC = /^(Handlebars|Grips|BarEnds|Brake_levers|Lines|Seat|Seatpost|Front_rim|Rear_rim|Spoke_nipples|Spokes|Pedals|Guard|Front_tire|Rear_Tire)$/;
+function toFloat(src, matrix){
+  const g = new THREE.BufferGeometry();
+  for (const name of ['position', 'normal', 'uv']) {
+    const a = src.attributes[name]; if (!a) continue;
+    const out = new Float32Array(a.count * a.itemSize);
+    for (let i = 0; i < a.count; i++) for (let k = 0; k < a.itemSize; k++) out[i * a.itemSize + k] = a.getComponent(i, k);
+    g.setAttribute(name, new THREE.BufferAttribute(out, a.itemSize));
+  }
+  g.setIndex(src.index ? Array.from(src.index.array) : null);
+  return g.applyMatrix4(matrix);
+}
+function mergeStatic(m){
+  const groups = new Map();
+  m.root.traverse(o => {
+    if (!o.isMesh || o.isInstancedMesh || /Decal/i.test(o.userData.node) || DYNAMIC.test(o.userData.node)) return;
+    if (!groups.has(o.material)) groups.set(o.material, []);
+    groups.get(o.material).push(o);
+  });
+  const inv = m.root.matrixWorld.clone().invert();
+  for (const [mat, list] of groups) {
+    if (list.length < 2) continue;
+    const names = ['position', 'normal', 'uv'].filter(n => list.every(o => o.geometry.attributes[n]));
+    if (mat.normalMap && !names.includes('uv')) continue;
+    const geos = list.map(o => {
+      const g = toFloat(o.geometry, new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
+      for (const n of Object.keys(g.attributes)) if (!names.includes(n)) g.deleteAttribute(n);
+      return g;
+    });
+    const merged = mergeGeometries(geos); if (!merged) continue;
+    const mesh = new THREE.Mesh(merged, mat);
+    mesh.castShadow = mesh.receiveShadow = true;
+    mesh.userData = { slot: list[0].userData.slot, node: 'merged', parts: list.map(o => o.userData.node) };
+    m.root.add(mesh); m.pickables.push(mesh);
+    for (const o of list) { o.removeFromParent(); o.geometry.dispose(); m.pickables.splice(m.pickables.indexOf(o), 1); delete m.meshes[o.name]; }
+  }
+}
+// draw this model only (the others hidden); returns the previous one
+function showModel(m){
+  const prev = drawn;
+  if (m && drawn !== m) { for (const x of models) x.root.visible = x === m; drawn = m; }
+  return prev;
+}
+
+loader.load(glbParam || LOD_URL.low, gltf => {
+  low = buildModel(gltf, 'low'); showModel(low);
   FONTS.forEach(f => loadFont(f).then(ok => { if (ok) { drawTexts(); requestRender(); } }));
-  // generated treads (1 semi-slick, 2 slick street, 3 mud spike)
-  makeTires(M.tires, HUBS).forEach((list, i) => { if (i) treads[i] = list; for (const m of list) { scene.add(m); pickables.push(m); } });
-  setupDeformers();
-  if (meshes.Spoke_nipples) meshes.Spoke_nipples.material = M.nipples;
+  // generated treads (1 semi-slick, 2 slick street, 3 mud spike), shared by both LODs
+  makeTires(M.tires, HUBS).forEach((list, i) => { if (i) treads[i] = list; for (const m of list) scene.add(m); });
   // compile every variant up front (hidden parts included), so no option ever stalls on a shader compile
-  const variants = [...treads.flat(), ...collars.inner, ...collars.outer, nodes.Guard, nodes.Pedals].filter(Boolean);
+  const variants = [...treads.slice(1).flat(), ...low.knobby, ...low.collars.inner, ...low.collars.outer, low.nodes.Guard, low.nodes.Pedals].filter(Boolean);
   variants.forEach(o => o.visible = true);
   document.getElementById('loadTxt').textContent = 'Preparing materials…';
-  // warm every look's deformation targets now, so rendering its thumbnail never computes geometry mid-frame
-  for (const s of [state, ...PRESETS.map(p => ({ ...DEFAULT, ...p.c }))]) { const dp = deformParams(s); for (const k in deform) deform[k].warm(dp[k]); }
+  warmDeforms(low);
   // compileAsync covers the main pass only: one render with every variant visible also compiles the shadow-pass
   // programs (e.g. the instanced mud-spike knobs). Same task as applyState below, so this frame is never shown.
-  const ready = () => { renderer.shadowMap.needsUpdate = true; renderer.render(scene, camera); sectionMats(); applyState(true); document.getElementById('loader').classList.add('done'); performance.mark('first-visual'); performance.mark('interactive'); flyTo('overview'); modelReady = true; queueThumbs(); };
+  const ready = () => {
+    renderer.shadowMap.needsUpdate = true; renderer.render(scene, camera); sectionMats(); applyState(true);
+    // start exactly where the poster was rendered, then cross-fade the poster away
+    flyTo('overview', true); frame(performance.now());
+    document.getElementById('loader').classList.add('done'); document.getElementById('poster')?.classList.add('gone');
+    if (!performance.getEntriesByName('first-visual').length) performance.mark('first-visual');
+    performance.mark('interactive');
+    modelReady = true; queueThumbs();
+    // data-lod: light → detail once the at-rest model is in; 'single' when only one file loads (tools)
+    document.documentElement.dataset.lod = glbParam ? 'single' : 'light';
+    if (!glbParam) loadDetail();
+  };
   (renderer.compileAsync ? renderer.compileAsync(scene, camera) : Promise.resolve()).then(ready, ready);
 }, e => {
   if (!e.total) return;
@@ -357,11 +435,32 @@ loader.load('assets/models/bike.glb', gltf => {
   document.getElementById('loadTxt').textContent = `Loading bike… ${p}%`;
   document.getElementById('loadBar').style.width = p + '%';
 }, err => { document.getElementById('loadTxt').textContent = 'Could not load the 3D model.'; console.error(err); });
+
+// the at-rest model: parsed in workers, built in idle time, uploaded in a hidden 1×1 render, then swapped in at rest
+let pendingUpload = null;
+function loadDetail(){
+  loader.load(LOD_URL.detail, async gltf => {
+    await idle();
+    const m = buildModel(gltf, 'detail'); m.root.visible = false;
+    await idle(); warmDeforms(m);
+    await idle(); syncModel(m, true);
+    pendingUpload = m; requestRender();   // frame() uploads it, then picks it at the next rest frame
+  }, undefined, err => console.warn('Detailed model not loaded, staying on the light one.', err));
+}
+// render a model once into a 1×1 corner so its buffers are on the GPU before it is first shown (runs inside frame())
+function uploadModel(m){
+  const prev = showModel(m), size = renderer.getSize(new THREE.Vector2());
+  renderer.setScissorTest(true); renderer.setScissor(0, 0, 1, 1); renderer.setViewport(0, 0, 1, 1);
+  renderer.render(scene, camera);
+  renderer.setScissorTest(false); renderer.setViewport(0, 0, size.x, size.y);
+  showModel(prev);
+}
 camera.position.set(2.6, 1.6, 4.6); controls.target.set(0, .52, 0);
 
 /* ============ deformations (see looks.js) ============ */
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-function setupDeformers(){
+function setupDeformers(model){
+  const { meshes, deform, collars } = model;
   const pick = names => names.map(n => meshes[n]).filter(Boolean);
   // cockpit: the bar stretches between the stem clamp and the bends; grips, levers, bar ends and
   // collars move rigidly with the bar ends; brake lines bend along near the bar
@@ -392,7 +491,7 @@ function setupDeformers(){
       g.setIndex(sets[k]); g.boundingSphere = col.geometry.boundingSphere;
       const m = new THREE.Mesh(g, col.material); m.castShadow = m.receiveShadow = true; Object.assign(m.userData, col.userData);
       col.parent.add(m); m.position.copy(col.position); m.quaternion.copy(col.quaternion); m.scale.copy(col.scale);
-      collars[k].push(m); pickables.push(m);
+      collars[k].push(m); model.pickables.push(m);
     }
     col.geometry.setIndex(sets.keep);
   }
@@ -476,8 +575,8 @@ function setupDeformers(){
     return p;
   });
 }
-function rainbow(on, instant){
-  const np = deform.wheels?.items.find(it => it.mesh.name === 'Spoke_nipples'); if (!np) return;
+function rainbow(model, on, instant){
+  const np = model.deform.wheels?.items.find(it => it.mesh.name === 'Spoke_nipples'); if (!np) return;
   const attr = np.mesh.geometry.attributes.color, from = attr.array.slice(), to = new Float32Array(from.length).fill(1), c = new THREE.Color();
   if (on) for (const g of np.data.pieces.groups) { c.setHSL(g.hue, .85, .55); for (const v of g.verts) to.set([c.r, c.g, c.b], v * 3); }
   run(attr, k => { for (let i = 0; i < to.length; i++) attr.array[i] = from[i] + (to[i] - from[i]) * k; attr.needsUpdate = true; }, instant);
@@ -497,7 +596,8 @@ const deformParams = s => ({
   wheels: { depth: RIM_DEPTHS[s.rimDepth]?.[2] ?? 0, bladed: SPOKE_SHAPES[s.spokeShape]?.[2] ?? 0 },
   pedals: PEDAL_STYLES[s.pedalStyle]?.[2] ?? 0,
 });
-function applyState(instant=false, ui=true){
+// `targets`: the models whose geometry follows the state (look thumbnails only touch the light model)
+function applyState(instant=false, ui=true, targets=models){
   const paint = pick('frame')[1], fin = FINISH[state.finish] || FINISH[0];
   const finish = { roughness:fin.roughness, metalness:fin.metalness, clearcoat:fin.clearcoat, clearcoatRoughness:fin.clearcoatRoughness };
   for (const m of [M.frame, M.rear]) m.normalScale.set(fin.ns, fin.ns);   // flake map stays bound: no recompile
@@ -512,7 +612,6 @@ function applyState(instant=false, ui=true){
   const anoMat = { color: ano[1], iridescence: oil ? 1 : .0001, roughness: oil ? .18 : .28 };
   setMat(M.accent, anoMat, instant);
   setMat(M.nipples, { ...anoMat, color: state.nipples ? '#ffffff' : ano[1] }, instant);
-  if (M.nipples.userData.rainbow !== state.nipples) { M.nipples.userData.rainbow = state.nipples; rainbow(!!state.nipples, instant); }
   setMat(M.forkLow, { color: pick('fork')[1] }, instant);
   const up = pick('uppers'); setMat(M.forkUp, { color: up[1], metalness: up[0]==='Black' ? .8 : 1, roughness: up[0]==='Black' ? .12 : .18 }, instant);
   setMat(M.spring, { color: pick('spring')[1] }, instant);
@@ -533,34 +632,42 @@ function applyState(instant=false, ui=true){
   setMat(M.cranks, { color: pick('cranks')[1], metalness: state.cranks ? 1 : .8 }, instant);
   setMat(M.pedals, { color: pick('pedals')[1] }, instant);
 
-  // part swaps & toggles
-  const slick = state.tread !== 0;   // the sidewall decals only fit the GLB's knobby tire
-  treads.forEach((list, i) => list.forEach(t => t.visible = i === state.tread));
-  collars.outer.forEach(m => m.visible = state.collars === 0);
-  collars.inner.forEach(m => m.visible = state.collars !== 2);
-  if (nodes.Guard) nodes.Guard.visible = state.guide === 0;
-  if (nodes.Pedals) nodes.Pedals.visible = state.pedalsOn === 0;
-  const off = SEAT_AXIS.clone().multiplyScalar(state.height / 100);
-  const local = off.applyAxisAngle(new THREE.Vector3(0,1,0), Math.PI/2); // world → bike-local
-  for (const n of ['Seat', 'Seatpost']) if (nodes[n]) nodes[n].position.copy(nodes[n].userData.basePos).add(local);
-  // shape changes (cached, eased over --slow)
-  const dp = deformParams(state);
-  for (const k in deform) deform[k].set(dp[k], instant, thumbMode ? thumbMesh : undefined);
+  // generated treads are shared; each model's own knobby tire is toggled in syncModel()
+  treads.forEach((list, i) => { if (i) list.forEach(t => t.visible = i === state.tread); });
 
-  // stickers & custom text
+  // stickers & custom text: shared materials and canvases
+  const slick = state.tread !== 0;   // the sidewall decals only fit the GLB's knobby tire
   drawTexts();
-  for (const d of decals) {
-    const sp = TEXT_SPOTS.find(s => s.id === d.userData.spot), custom = sp ? spotText(sp).length > 0 : false;
-    d.visible = (state.logos === 0 || custom) && !(sp?.arc && slick);
-    setMat(d.material, { color: matchColor(pick(sp ? spotStyle(sp).col : 'logoColor')) }, instant);
-    const map = custom ? textDecal(d).tex : d.userData.baseMap;
-    if (d.material.map !== map) d.material.map = map;   // both are sRGB maps: same shader, no recompile
+  for (const info of Object.values(decalInfo)) {
+    const sp = info.spot, custom = sp ? spotText(sp).length > 0 : false;
+    info.shown = (state.logos === 0 || custom) && !(sp?.arc && slick);
+    setMat(info.mat, { color: matchColor(pick(sp ? spotStyle(sp).col : 'logoColor')) }, instant);
+    const map = custom ? textDecal(info).tex : info.baseMap;
+    if (info.mat.map !== map) info.mat.map = map;   // both are sRGB maps: same shader, no recompile
   }
-  // shadow signature: anything that changes the bike's silhouette
-  const sig = [state.tread, state.collars, state.guide, state.pedalsOn, state.height, state.pedalStyle, state.rise, state.width, state.saddleShape, state.rimDepth, state.spokeShape].join();
-  if (sig !== shadowSig) { shadowSig = sig; shadowDirty = true; }
+  for (const m of targets) syncModel(m, instant);
+  // shadow signature: anything that changes the bike's silhouette (look thumbnails don't count)
+  if (!thumbMode) {
+    const sig = [state.tread, state.collars, state.guide, state.pedalsOn, state.height, state.pedalStyle, state.rise, state.width, state.saddleShape, state.rimDepth, state.spokeShape].join();
+    if (sig !== shadowSig) { shadowSig = sig; shadowDirty = true; }
+  }
   if (ui) updateUI();
   requestRender();
+}
+// one model's geometry: part swaps, toggles, saddle height, deformations, decal visibility, rainbow nipples
+function syncModel(m, instant){
+  m.knobby.forEach(t => t.visible = state.tread === 0);
+  m.collars.outer.forEach(c => c.visible = state.collars === 0);
+  m.collars.inner.forEach(c => c.visible = state.collars !== 2);
+  if (m.nodes.Guard) m.nodes.Guard.visible = state.guide === 0;
+  if (m.nodes.Pedals) m.nodes.Pedals.visible = state.pedalsOn === 0;
+  const local = SEAT_AXIS.clone().multiplyScalar(state.height / 100).applyAxisAngle(new THREE.Vector3(0,1,0), Math.PI/2); // world → bike-local
+  for (const n of ['Seat', 'Seatpost']) if (m.nodes[n]) m.nodes[n].position.copy(m.nodes[n].userData.basePos).add(local);
+  // shape changes (cached, eased over --slow)
+  const dp = deformParams(state);
+  for (const k in m.deform) m.deform[k].set(dp[k], instant, thumbMode ? thumbMesh : undefined);
+  for (const d of m.decals) d.visible = decalInfo[d.userData.node].shown;
+  if (!thumbMode && m.rainbow !== state.nipples) { m.rainbow = state.nipples; rainbow(m, !!state.nipples, instant); }
 }
 const spotText = sp => { const t = state[sp.key].trim(); return state[sp.id + 'Case'] ? t : t.toUpperCase(); };
 const spotStyle = sp => state.sameStyle ? { font: state.txtFont, col: 'logoColor', fx: state.txtFx }
@@ -568,13 +675,13 @@ const spotStyle = sp => state.sameStyle ? { font: state.txtFont, col: 'logoColor
 // a "match" option (null hex) borrows the color of the slot named in opts[i][3]
 const matchColor = o => o[1] ?? (o[3] === 'frame' ? pick('frame')[1] : pick('accent')[1]);
 let thumbMode = false;   // true while a look thumbnail renders
-const thumbMesh = it => it.mesh !== meshes.Spoke_nipples;   // nipples are sub-pixel in a thumbnail: skip and hide them
-const textDecal = d => thumbMode ? d.userData.tdThumb : d.userData.td;
+const thumbMesh = it => it.mesh.name !== 'Spoke_nipples';   // nipples are sub-pixel in a thumbnail: skip and hide them
+const textDecal = info => thumbMode ? info.tdThumb : info.td;
 function drawTexts(){
   for (const sp of TEXT_SPOTS) {
     const txt = spotText(sp); if (!txt) continue;
     const st = spotStyle(sp), f = FONTS[st.font] || FONTS[0];
-    for (const d of spotMeshes[sp.id]) textDecal(d).draw(txt, f, st.fx);
+    for (const info of spotDecals[sp.id]) textDecal(info).draw(txt, f, st.fx);
   }
 }
 
@@ -609,7 +716,7 @@ function frame(now){
   // step would overshoot (iridescence .0001 → -.005 drops the define and recompiles the shader)
   for (const [key, a] of anims) { const t = Math.min(1, Math.max(0, (now - a.start) / a.dur)); if (t >= 1) anims.delete(key); a.step(1 - Math.pow(1 - t, 3)); }
   let deforming = false;
-  for (const d of Object.values(deform)) if (d.step(now)) deforming = true;
+  for (const m of models) for (const k in m.deform) if (m.deform[k].step(now)) deforming = true;
   if (controls.update()) cameraMoving = true;   // true while damping or auto-rotate moves the camera
   if (controls.autoRotate) cameraMoving = true;
   if (!stageVisible || document.hidden) return;
@@ -621,6 +728,15 @@ function frame(now){
   if (mode === 'rest' && now - lastMove < 200) mode = null;
   if (mode && mode !== 'rest' && lastFrame) res.sample(now - lastFrame);
   if (mode) res.apply(res.target(mode));
+  // LOD: the detailed model at rest, the light one while the user drags (and while the camera moves on touch devices)
+  if (pendingUpload) { uploadModel(pendingUpload); detail = pendingUpload; pendingUpload = null; }
+  if (mode && detail) {
+    const want = mode === 'input' || (coarse && mode === 'move') ? low : detail;
+    if (want === detail && !detail.shown) {   // first time: its silhouette replaces the light model's in the shadow map
+      detail.shown = true; shadowDirty = true; document.documentElement.dataset.lod = 'detail'; performance.mark('detail');
+    }
+    showModel(want);
+  }
   thumbStep(now);   // draws into a corner of the canvas; the full render below paints over it in the same frame
   // static shadows: one shadow pass when parts move, appear or disappear (after thumbStep, so a look's shadow never leaks in)
   if (deforming) shadowDirty = true;
@@ -671,27 +787,29 @@ function prepThumbText(i){
   const saved = { ...state };
   thumbMode = true; Object.assign(state, DEFAULT, PRESETS[i].c); drawTexts(); thumbMode = false;
   Object.assign(state, saved);
-  for (const sp of TEXT_SPOTS) if (PRESETS[i].c[sp.key]) for (const d of spotMeshes[sp.id]) renderer.initTexture(d.userData.tdThumb.tex);
+  for (const sp of TEXT_SPOTS) if (PRESETS[i].c[sp.key]) for (const info of spotDecals[sp.id]) renderer.initTexture(info.tdThumb.tex);
 }
 function thumbStep(now){
   // one look per frame, only while nothing is animating (the swap below applies states instantly)
-  if (!modelReady || !thumbQueue.length || anims.size || tween || Object.values(deform).some(d => d.anim) || now - lastThumb < 90) return;
+  if (!modelReady || !thumbQueue.length || anims.size || tween || models.some(m => Object.values(m.deform).some(d => d.anim)) || now - lastThumb < 90) return;
   const buf = renderer.getDrawingBufferSize(new THREE.Vector2()); if (buf.x < TW || buf.y < TH) return;
   lastThumb = now;
   const job = thumbQueue.shift(), i = job.i, theme = themeName(), saved = { ...state };
   if (job.prep) { prepThumbText(i); return; }
   const lit = Object.values(hlMats || {}).flat().filter(m => m.emissiveIntensity > 0).map(m => [m, m.emissiveIntensity]);
   lit.forEach(([m]) => m.emissiveIntensity = 0);   // a hovered part's glow must not end up in a thumbnail
-  thumbMode = true; Object.assign(state, DEFAULT, PRESETS[i].c); applyState(true, false);
+  thumbMode = true; Object.assign(state, DEFAULT, PRESETS[i].c); applyState(true, false, [low]);   // thumbnails come from the light model
+  const was = showModel(low);
   const pr = renderer.getPixelRatio(), size = renderer.getSize(new THREE.Vector2()), clear = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha();
   renderer.setScissorTest(true); renderer.setViewport(0, 0, TW / pr, TH / pr); renderer.setScissor(0, 0, TW / pr, TH / pr);
-  const nip = meshes.Spoke_nipples; if (nip) nip.visible = false;
+  const nip = low.meshes.Spoke_nipples; if (nip) nip.visible = false;
   renderer.setClearColor(0x000000, 0); renderer.render(scene, thumbCam);
   if (nip) nip.visible = true;
   const g = thumbCanvas.getContext('2d'); g.clearRect(0, 0, TW, TH);
   g.drawImage(renderer.domElement, 0, buf.y - TH, TW, TH, 0, 0, TW, TH);
   renderer.setScissorTest(false); renderer.setViewport(0, 0, size.x, size.y); renderer.setClearColor(clear, alpha);
-  thumbMode = false; Object.assign(state, saved); applyState(true, false);
+  showModel(was);
+  thumbMode = false; Object.assign(state, saved); applyState(true, false, [low]);
   lit.forEach(([m, v]) => m.emissiveIntensity = v);
   // encode off the main thread, then hand over a data URL
   thumbCanvas.toBlob(b => { const r = new FileReader(); r.onload = () => { thumbCache.set(theme + '|' + i, r.result); if (theme === themeName()) setThumb(i, r.result); }; r.readAsDataURL(b); }, 'image/png');
@@ -715,7 +833,9 @@ renderer.domElement.addEventListener('pointerup', e => {
   const r = renderer.domElement.getBoundingClientRect();
   ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ndc, camera);
-  const hit = ray.intersectObjects(pickables.filter(p => p.visible && p.parent.visible), false)[0]; if (!hit) return;
+  // pick against the light model (its geometry follows the same state), whichever model is drawn
+  const shown = o => { for (let x = o; x && x !== low.root; x = x.parent) if (!x.visible) return false; return true; };
+  const hit = ray.intersectObjects([...low.pickables, ...treads.slice(1).flat()].filter(shown), false)[0]; if (!hit) return;
   const slot = hit.object.userData.slot, sec = SLOT_SECTION[slot], sp = TEXT_SPOTS.find(s => s.id === hit.object.userData.spot);
   if (sp) { showTip(e, sp.name + ' text'); openSection('stickers', true, sp.view, 'spot-' + sp.id); openSpot(sp.id, true, false); return; }
   showTip(e, SLOT_LABEL[slot] || 'Part'); if (sec) openSection(sec, true);
@@ -795,12 +915,12 @@ function sectionMats(){
   hlMats = {};
   for (const [slot, sec] of Object.entries(SLOT_SECTION)) if (M[slot]) (hlMats[sec] ??= []).push(M[slot]);
   hlMats.accent.push(M.nipples);
-  hlMats.stickers = decals.map(d => d.material);
+  hlMats.stickers = Object.values(decalInfo).map(i => i.mat);
   for (const m of Object.values(hlMats).flat()) { m.emissive.set(HL.color); m.emissiveIntensity = 0; m.userData.hl = {}; }
   return hlMats;
 }
 function highlight(id){
-  if (id === hlSec || !decals.length) return; hlSec = id;
+  if (id === hlSec || !low) return; hlSec = id;
   for (const [sec, mats] of Object.entries(sectionMats())) for (const m of mats) {
     const from = m.emissiveIntensity, key = m.userData.hl;
     if (sec !== id) {
@@ -1042,4 +1162,4 @@ new ResizeObserver(syncLooks).observe(document.getElementById('presets'));
 try { const t = localStorage.getItem('dh-theme'); if (t) document.documentElement.dataset.theme = t; } catch(e) {}
 syncGround();
 updateUI();
-if (new URLSearchParams(location.search).has('debug')) window.__bike = { THREE, scene, camera, controls, renderer, state, applyState, flyTo, spotMeshes, M, nodes };
+if (new URLSearchParams(location.search).has('debug')) window.__bike = { THREE, scene, camera, controls, renderer, state, applyState, flyTo, M, models, get low(){ return low; }, get detail(){ return detail; }, showModel };

@@ -81,3 +81,49 @@ two loads of the same build differ in **0 pixels**, so any difference below come
 | At-rest pixels changed vs baseline | | ≤ 0.06% (soft shadow edges only) |
 
 While dragging the frame is now triangle-bound (1.36M triangles), which is what Phase 2 addresses.
+
+## Phase 2: lighter geometry and draw calls
+
+- **Two LODs** (`tools/model-pipeline/lods.mjs`), built from the full web model `bike.glb` (Blender is not needed).
+  Every part is simplified within a world-space error budget, with normals counted in the error so glossy highlights stay put.
+  Small reflective parts whose outlines show at rest (rims, hubs, rotors, fork, saddle, levers) are kept as they are in lod0.
+  The spoke nipples (143k triangles of 2 mm cylinders) go to 8.9k. Decals are never simplified.
+  `check-lods.mjs` fails if the two files differ in any node, mesh, material, decal texture or attribute set.
+
+  | File | Triangles | Size | Used for |
+  |---|---|---|---|
+  | `bike.glb` | 1,364,215 | 7.2 MB | pipeline source only |
+  | `bike-lod0.glb` | 660,783 | 3.5 MB | desktop at rest |
+  | `bike-lod1.glb` | 189,487 | 1.5 MB | first load, dragging, touch-device camera motion, look thumbnails, picking |
+- **Progressive load.** A pre-rendered poster (`assets/poster/*.webp`, made by `tools/perf/poster.mjs` from the real app,
+  transparent background) shows first. lod1 loads next and the page is configurable; the camera starts exactly where the
+  poster was rendered, and the poster cross-fades out. lod0 then downloads in the background, is decoded in workers
+  (`MeshoptDecoder.useWorkers`), built in idle callbacks, uploaded to the GPU in a hidden 1×1 render, and drawn from the next
+  rest frame. No long task after the page is interactive.
+- **Both LODs stay in the scene** with the same materials, decal materials and text canvases, so they are always the same
+  bike. Geometry state (deformations, collars, toggles, saddle height) is applied to each model. lod0 draws at rest; lod1
+  draws while the user drags (and during any camera motion on touch devices).
+- **Static meshes merged:** non-configurable parts that share a material become one mesh per material at load
+  (deformed, toggled, moved and decal meshes stay separate). Draw calls 80 → 68.
+- **Picking** raycasts the light model only.
+
+| Metric | Baseline | Phase 2 |
+|---|---|---|
+| Triangles at rest | 1,364,279 | **660,847** |
+| Triangles while dragging | 1,364,279 | **189,551** |
+| Draw calls | 80 | 68 |
+| Frame cost at rest, DPR 2 | 9.4 ms | 8.1–9.3 ms (fill-bound now; varies run to run) |
+| Frame cost while dragging | 9.4 ms | **3.0–3.6 ms** (lod1 at DPR 1) |
+| Fast 4G: first visual | 8.9 s | **1.1 s** (poster) |
+| Fast 4G: configurable | 8.9 s | **3.6 s** (lod1, 2.3 MB) |
+| Fast 4G: at-rest model in | 8.9 s | 7.5 s (5.8 MB total, in the background) |
+| At-rest pixels changed vs baseline | | 0.4–0.9% of pixels, mean 0.2–0.4 / 255 |
+
+The at-rest differences are faint shading changes on glossy surfaces from the simplification; side by side the images
+are identical (below). The poster and the loaded 3D view line up at any stage size; the poster is a fixed-size image, so
+it is slightly softer until the cross-fade.
+
+| Baseline | Phase 2 (lod0) |
+|---|---|
+| ![](perf/baseline-overview.webp) | ![](perf/p2-overview.webp) |
+| ![](perf/baseline-downtube.webp) | ![](perf/p2-downtube.webp) |

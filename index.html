@@ -16,6 +16,23 @@
   <section class="stage" id="stage" aria-label="3D bike preview">
     <div class="brandmark">Gravity DH <span class="live"><i aria-hidden="true"></i>Live preview</span></div>
     <div class="hint" id="hint">Drag to rotate · Scroll to zoom · Click a part to edit it</div>
+    <img class="poster" id="poster" alt="" fetchpriority="high">
+    <script>
+      // Poster: a pre-rendered image of the bike (tools/perf/poster.mjs), shown until the 3D model is ready.
+      // Runs before first paint: applies the saved theme and picks the poster for this stage shape and theme.
+      (function(){
+        var r = document.documentElement, t = null, p = document.getElementById('poster');
+        try { t = localStorage.getItem('dh-theme'); } catch (e) {}
+        if (t) r.dataset.theme = t;
+        if (/[?&]noposter/.test(location.search)) { p.remove(); return; }
+        var dark = t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+        var s = document.getElementById('stage').getBoundingClientRect(), m = s.width / s.height < .9;
+        p.className += m ? ' m' : ' d';
+        if (location.hash.length > 1) p.className += ' dim';   // a shared build: the poster shows the default one
+        p.onload = function(){ performance.mark('first-visual'); document.getElementById('stage').classList.add('hasPoster'); };
+        p.src = 'assets/poster/' + (m ? 'mobile' : 'desktop') + '-' + (dark ? 'dark' : 'light') + '.webp';
+      })();
+    </script>
     <div class="loader" id="loader"><div class="box"><div id="loadTxt">Loading bike… 0%</div><div class="bar"><i id="loadBar"></i></div></div></div>
     <div class="partTip" id="partTip"></div>
     <div class="toolbar" role="toolbar" aria-label="View controls">

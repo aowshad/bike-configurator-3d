@@ -22,7 +22,16 @@
    npm run optimize      # → ../../assets/models/bike.glb
    ```
    This runs a per-part simplify (ratios are in `RATIO` in `optimize.mjs`), then dedup, prune, reorder, quantize, and meshopt compression.
-   The result is 5.6M → 1.36M triangles and 183 MB → 7.2 MB.
+   The result is 5.6M → 1.36M triangles and 183 MB → 7.2 MB. `bike.glb` is the source for the LODs; the app doesn't load it.
+3. **Build the LODs** (this step needs only `bike.glb`, not Blender):
+   ```bash
+   npm run lods          # → ../../assets/models/bike-lod0.glb (≈660k tris, 3.5 MB) and bike-lod1.glb (≈190k, 1.5 MB)
+   npm run check         # fails if the LODs differ in any node, mesh, material, decal texture or attribute set
+   ```
+   Each part is simplified within a world-space error budget (`LODS` in `lods.mjs`); normals count in the error so glossy
+   shading holds. Parts listed with `keep: true` are not simplified. Decals are never touched.
+4. **Posters:** after changing the model, the default build or the lighting, regenerate the loading posters with
+   `node tools/perf/poster.mjs` (dev server running).
 
 ## Material IDs that matter (after dedup)
 
@@ -50,4 +59,4 @@ If the model changes, rebuild this table. Use `tools/debug-materials.html?mat=Ma
 ## Planned improvements
 
 - Bake procedural detail (grip pattern, tire rubber, saddle grain, frame flake) into normal and roughness maps with Cycles. This needs the UVs to be checked first.
-- Use KTX2 textures and LOD meshes for mobile.
+- Use KTX2 textures for the decals (they are only about 250 KB today).

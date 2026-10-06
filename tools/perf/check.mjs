@@ -15,7 +15,7 @@ for (const [w, h, mobile] of [[1440, 900, false], [375, 812, true]]) {
   await p.goto(PAGE + '?perf&debug');
   await p.waitForSelector('#loader.done', { timeout: 120000 });
   await p.waitForFunction(() => document.querySelectorAll('.look.ready').length === document.querySelectorAll('.look').length, null, { timeout: 60000 });
-  await p.waitForFunction(() => !document.documentElement.dataset.lod || document.documentElement.dataset.lod === 'detail', null, { timeout: 120000 }).catch(() => {});
+  await p.waitForFunction(() => ['detail', 'single', 'light-only'].includes(document.documentElement.dataset.lod), null, { timeout: 120000 }).catch(() => {});
   await p.waitForTimeout(2500);
   const tag = `[${w}]`;
   const stats = () => p.evaluate(() => window.__perf.stats());

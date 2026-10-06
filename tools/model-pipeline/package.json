@@ -4,7 +4,10 @@
   "type": "module",
   "description": "Turns the Blender source model into the web-ready assets/models/bike.glb",
   "scripts": {
-    "optimize": "node --max-old-space-size=12288 optimize.mjs fuzz_full.glb ../../assets/models/bike.glb"
+    "optimize": "node --max-old-space-size=12288 optimize.mjs fuzz_full.glb ../../assets/models/bike.glb",
+    "lods": "node --max-old-space-size=8192 lods.mjs",
+    "check": "node check-lods.mjs ../../assets/models/bike.glb ../../assets/models/bike-lod0.glb ../../assets/models/bike-lod1.glb",
+    "counts": "node counts.mjs"
   },
   "dependencies": {
     "@gltf-transform/core": "^4.5.1",

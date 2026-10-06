@@ -54,6 +54,17 @@ canvas{display:block;width:100%;height:100%;touch-action:none;outline:none}
 
 .loader{position:absolute;inset:0;display:grid;place-items:center;transition:opacity var(--slow) var(--ease);z-index:3}
 .loader.done{opacity:0;pointer-events:none}
+/* poster: sized like the camera frames the bike (height-fit on wide stages, width-fit below 0.9 aspect) */
+.stage{container-type:size}
+.poster{position:absolute;z-index:1;pointer-events:none;opacity:1;transition:opacity var(--slow) var(--ease)}
+.poster:not([src]){display:none}
+.poster.d{left:50%;top:50%;height:min(100cqh,100cqw);transform:translate(-50%,-50%)}
+.poster.m{left:0;top:50%;width:100cqw;transform:translateY(-50%)}
+.poster.dim{opacity:.4}
+.poster.gone{opacity:0}
+.stage.hasPoster .loader{place-items:end center;padding-bottom:88px}
+.stage.hasPoster .loader .box{width:auto;padding:8px 14px;border-radius:999px;background:var(--chip);border:1px solid var(--border);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.stage.hasPoster .loader .bar{display:none}
 .loader .box{width:240px;text-align:center;color:var(--muted);font-size:13px}
 .bar{height:3px;border-radius:2px;background:var(--border);margin-top:10px;overflow:hidden}
 .bar i{display:block;height:100%;width:0;background:var(--ink);transition:width var(--base) var(--ease)}

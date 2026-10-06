@@ -8,6 +8,7 @@ import fs from 'node:fs';
 const args = process.argv.slice(2), label = args[0] || 'run';
 const opt = k => { const i = args.indexOf('--' + k); return i > 0 ? args[i + 1] : null; };
 const PAGE = opt('url') || 'http://localhost:5181/';
+const Q = opt('q') ? '&' + opt('q') : '';
 const only = (opt('only') || 'idle,drag,mobile,load,shots').split(',');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const SHOT_VIEWS = ['overview', 'cockpit', 'tire', 'downtube'];
@@ -30,7 +31,7 @@ async function open({ w = 1440, h = 900, dpr = 2, mobile = false, theme = 'light
 async function settle(p){
   await p.waitForSelector('#loader.done', { timeout: 120000 });
   await p.waitForFunction(() => document.querySelectorAll('.look.ready').length === document.querySelectorAll('.look').length, null, { timeout: 60000 }).catch(() => {});
-  await p.waitForFunction(() => !document.documentElement.dataset.lod || document.documentElement.dataset.lod === 'detail', null, { timeout: 120000 }).catch(() => {});
+  await p.waitForFunction(() => ['detail', 'single', 'light-only'].includes(document.documentElement.dataset.lod), null, { timeout: 120000 }).catch(() => {});
   await p.waitForTimeout(2500);
 }
 const gpuName = p => p.evaluate(() => { const gl = document.createElement('canvas').getContext('webgl2'); const e = gl.getExtension('WEBGL_debug_renderer_info'); return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : '?'; });
@@ -47,7 +48,7 @@ async function drag(p, ms = 2000){
 
 if (only.includes('idle') || only.includes('drag') || only.includes('shots')) {
   const { ctx, p, errors } = await open();
-  await p.goto(PAGE + '?perf&debug'); await settle(p);
+  await p.goto(PAGE + '?perf&debug' + Q); await settle(p);
   result.gpu = await gpuName(p);
   if (only.includes('idle')) {
     const s = await p.evaluate(() => window.__perf.stats());
@@ -58,6 +59,8 @@ if (only.includes('idle') || only.includes('drag') || only.includes('shots')) {
   }
   if (only.includes('drag')) {
     const s = await drag(p);
+    // what a dragging frame costs: the light model at DPR 1
+    s.benchMsDragging = await p.evaluate(() => { const B = window.__bike, was = B.showModel(B.low); const ms = window.__perf.benchAt(1); B.showModel(was); return ms; });
     await p.waitForTimeout(1500);
     const after = await p.evaluate(() => window.__perf.stats());
     result.drag = { ...s, rendersPerSecAfterSettle: after.rendersPerSec };
@@ -94,6 +97,7 @@ if (only.includes('mobile')) {
 if (only.includes('load')) {
   // Chrome DevTools "Fast 4G": 9 Mbps down, 1.5 Mbps up, 165 ms latency (60 ms × 2.75), cache disabled
   const { ctx, p } = await open();
+  await p.addInitScript(() => { window.__long = []; new PerformanceObserver(l => { for (const e of l.getEntries()) window.__long.push([Math.round(e.startTime), Math.round(e.duration)]); }).observe({ type: 'longtask', buffered: true }); });
   const cdp = await ctx.newCDPSession(p);
   await cdp.send('Network.enable');
   await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
@@ -114,7 +118,9 @@ if (only.includes('load')) {
   const m = await p.evaluate(() => Object.fromEntries(performance.getEntriesByType('mark').map(x => [x.name, Math.round(x.startTime)])));
   Object.assign(marks, m);
   const fcp = await p.evaluate(() => Math.round(performance.getEntriesByName('first-contentful-paint')[0]?.startTime || 0));
-  result.load = { network: 'Fast 4G (9 Mbps, 165 ms)', fcp, ...marks, mbAtInteractive: bytesAtInteractive && +(bytesAtInteractive / 1048576).toFixed(2), mbTotal: +(bytes / 1048576).toFixed(2), wallMs: Date.now() - t0 };
+  const longAfter = await p.evaluate(at => window.__long.filter(([t]) => t > at), marks.interactive || 0);
+  result.load = { network: 'Fast 4G (9 Mbps, 165 ms)', fcp, ...marks, mbAtInteractive: bytesAtInteractive && +(bytesAtInteractive / 1048576).toFixed(2), mbTotal: +(bytes / 1048576).toFixed(2), wallMs: Date.now() - t0,
+    longTasksAfterInteractive: longAfter, longTasksTotal: await p.evaluate(() => window.__long.length) };
   console.log('load', result.load);
   await ctx.close();
 }
